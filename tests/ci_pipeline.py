@@ -42,6 +42,33 @@ for source in [smoke, cleanup]:
 validate = flow['jobs']['validate']
 check(validate['timeout-minutes'] == 15, 'Validate timeout regressed')
 steps = validate['steps']
+package_step = next(s for s in steps if s.get('name') == 'Create and verify clean deployment package')
+package_index = steps.index(package_step)
+check(next(i for i, s in enumerate(steps) if s.get('name') == 'Build CI and shared runtime layers once') < package_index,
+      'Package verifier runs before its CI image exists')
+for name in ['Build patched stable Caddy gateway', 'Runtime Compose smoke and privacy']:
+    check(package_index < next(i for i, s in enumerate(steps) if s.get('name') == name),
+          'Packaging errors must fail before expensive gateway/smoke gates')
+verification = next(line for line in package_step['run'].splitlines() if 'tests/ignore_release.py' in line)
+for required in ['docker run', 'ubcc-ci bash -ec', '-v "$PWD:/workspace:ro"', '-w /workspace',
+                 'ci_require python3 rg', '--archive "releases/ubcc-$PACKAGE_SHA.tar.gz"']:
+    check(required in verification, 'Archive verifier environment contract missing: ' + required)
+check(sum('tests/ignore_release.py' in s.get('run', '') for s in steps) == 1,
+      'Host/duplicate archive verifier invocation reintroduced')
+contracts_step = next(s for s in steps if s.get('name') == 'Contracts and tracked private files')
+check('ci_require bash python3 git timeout date docker sha256sum' in contracts_step['run'],
+      'Host test prerequisites not checked')
+check('python3 ripgrep git' in (root / 'Dockerfile').read_text(), 'CI image lost packaging tools')
+publish_body = next(s['run'] for s in flow['jobs']['publish']['steps'] if s.get('id') == 'publish')
+rolling_body = next(s['run'] for s in flow['jobs']['rolling']['steps'] if 'run' in s)
+for body, required in [(publish_body, ['jq', 'gh', 'sha256sum', 'find', 'grep', 'sudo', 'curl']),
+                       (rolling_body, ['gh', 'find'])]:
+    tools = next(line.strip().split()[1:] for line in body.splitlines() if line.strip().startswith('ci_require '))
+    for command in required:
+        check(command in tools, 'Release job missing executable preflight: ' + command)
+    check(body.index('ci_require ') < body.index('ci_run '), 'Release preflight occurs after Docker operations')
+    check("'verify Docker Buildx plugin' docker buildx version" in body, 'Buildx availability not checked')
+check("'verify Docker Compose plugin' docker compose version" in publish_body, 'Publish smoke needs Compose plugin')
 smoke_step = next(s for s in steps if s.get('name') == 'Runtime Compose smoke and privacy')
 check(smoke_step['timeout-minutes'] == 7 and '120s 300s' in smoke_step['run'], 'Smoke budget regressed')
 check(steps[-1]['if'] == 'always()' and 'ci-cleanup.sh' in steps[-1]['run'], 'External timeout fallback missing')
@@ -110,6 +137,13 @@ with tempfile.TemporaryDirectory(prefix='ubcc-ci-regression-') as temporary:
     prefix = ('if command -v cygpath >/dev/null; then export UBCC_STAGE=$(cygpath -u "$UBCC_STAGE"); '
               'export UBCC_TRACE=$(cygpath -u "$UBCC_TRACE"); fi; export PATH="$UBCC_STAGE:$PATH"; '
               'source scripts/docker/ci-common.sh; ')
+    for command, expected in [('bash date', 0), ('__ubcc_missing_executable__', 1)]:
+        result = subprocess.run([args.bash, '-c', prefix + 'ci_require ' + command],
+            cwd=root, env=env, capture_output=True, text=True, timeout=5)
+        check(result.returncode == expected, 'Required-command check accepted missing/rejected available tools')
+        if expected:
+            check('required command not found: __ubcc_missing_executable__' in result.stderr,
+                  'Missing prerequisite lacks actionable error')
     started = time.monotonic()
     result = subprocess.run([args.bash, '-c', prefix +
         "ci_run 1 'old entrypoint reproduction' bash docker/entrypoint.sh nginx -t"],

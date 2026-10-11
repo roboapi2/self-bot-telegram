@@ -46,6 +46,7 @@ jobs:
         timeout-minutes: 2
         run: |
           source scripts/docker/ci-common.sh
+          ci_require bash python3 git timeout date docker sha256sum
           python3 -m venv "$RUNNER_TEMP/contracts"
           ci_run 45 'install contract parser' "$RUNNER_TEMP/contracts/bin/pip" install PyYAML==6.0.3
           "$RUNNER_TEMP/contracts/bin/python" tests/docker_contracts.py
@@ -83,6 +84,13 @@ jobs:
           ci_run 150 'PHP, HTTP and Linux lifecycle tests' docker run --rm ubcc-ci bash scripts/test.sh
           ci_run 20 'rollback and persistent data mock' docker run --rm -e UBCC_ISOLATED_DEPLOY_TEST=1 ubcc-ci bash tests/docker_deploy.sh
           ci_run 45 'Composer dependency audit' docker run --rm ubcc-ci composer audit --locked --no-dev
+      - name: Create and verify clean deployment package
+        timeout-minutes: 2
+        run: |
+          source scripts/docker/ci-common.sh
+          export SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$GITHUB_SHA")
+          python3 scripts/build-release.py "ubcc-$GITHUB_SHA"
+          ci_run 60 'verify deployment archive in CI image' docker run --rm --read-only --tmpfs /tmp:rw,nosuid,nodev -v "$PWD:/workspace:ro" -w /workspace -e PACKAGE_SHA="$GITHUB_SHA" ubcc-ci bash -ec 'source scripts/docker/ci-common.sh; ci_require python3 rg; python3 tests/ignore_release.py --archive "releases/ubcc-$PACKAGE_SHA.tar.gz"'
       - name: Load exact candidate from shared build layers
         if: inputs.image_digest == ''
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
@@ -146,12 +154,6 @@ jobs:
         timeout-minutes: 7
         env: {RUNTIME_IMAGE: '${{ steps.runtime.outputs.image }}', CADDY_IMAGE: '${{ steps.runtime.outputs.gateway }}'}
         run: timeout --signal=TERM --kill-after=120s 300s bash scripts/docker/ci-smoke.sh "$RUNTIME_IMAGE" "$CADDY_IMAGE"
-      - name: Create and verify clean deployment package
-        timeout-minutes: 1
-        run: |
-          export SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$GITHUB_SHA")
-          python3 scripts/build-release.py "ubcc-$GITHUB_SHA"
-          python3 tests/ignore_release.py --archive "releases/ubcc-$GITHUB_SHA.tar.gz"
       - name: Save verified image and identity for publication
         if: github.event_name != 'pull_request' && inputs.image_digest == '' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         timeout-minutes: 2
@@ -222,6 +224,9 @@ jobs:
         run: |
           set -euo pipefail
           source scripts/docker/ci-common.sh
+          ci_require bash docker timeout date jq gh sha256sum find grep cat sudo mktemp mkdir cp chmod chown sed sleep rm curl
+          ci_run 5 'verify Docker Buildx plugin' docker buildx version
+          ci_run 5 'verify Docker Compose plugin' docker compose version
           (cd candidate && sha256sum -c image.tar.sha256)
           FILE=$(find candidate -name image.tar -print -quit)
           ci_run 90 'load verified image artifact' docker load -i "$FILE"
@@ -325,6 +330,8 @@ jobs:
         run: |
           set -euo pipefail
           source scripts/docker/ci-common.sh
+          ci_require bash docker timeout date gh find
+          ci_run 5 'verify Docker Buildx plugin' docker buildx version
           HEAD=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
           [[ "$HEAD" == "$GITHUB_SHA" ]] || exit 0
           ci_run 30 'publish edge reference' docker buildx imagetools create --prefer-index=false -t "$IMAGE:edge" "$IMAGE@$DIGEST"

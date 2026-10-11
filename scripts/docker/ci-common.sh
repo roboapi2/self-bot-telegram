@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # CI-only helpers. Progress goes to stderr so command substitutions stay machine-readable.
 ci_progress() { printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2; }
+ci_require() {
+    local command
+    for command in "$@"; do
+        command -v "$command" >/dev/null || { ci_progress "ERROR required command not found: $command"; return 1; }
+    done
+}
 ci_run() {
     local seconds=$1 label=$2 status=0
     shift 2

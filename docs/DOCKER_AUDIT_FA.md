@@ -1,5 +1,15 @@
 # ممیزی Docker و CI/CD — ۲۰۲۶/۱۰/۱۱
 
+## اصلاح محیط بررسی بسته — run 38162969680
+
+[job validate](https://github.com/roboapi2/self-bot-telegram/actions/runs/38162969680/job/114539569189) بررسی شد: buildها، PHP/Linux، rollback، Composer audit، هر دو Trivy و Compose smoke موفق بودند؛ در18:22:06 UTC بررسی بسته روی host با `ripgrep required for this optional development test` متوقف شد. این نتیجه قبولی imageهای قبلی را تأیید می‌کند، اما قبولی کامل workflow هنوز لازم است.
+
+ساخت archive با Python host حفظ شد؛ اجرای کامل `tests/ignore_release.py --archive` اکنون فقط یک بار در image موجود ubcc-ci است، با workspace bind فقط‌خواندنی، workdir=/workspace و tmpfs موقت /tmp. helper قبل از تست وجود python3 و rg را در همان container بررسی می‌کند. verifier بدون تغییر است؛ manifest/file hashes، checksum archive، source allowlist، هر دو ignore mode، canary و credential privacy حذف نشده‌اند. مرحله پس از build/test CI و حذف canaryهای build context، پیش از build gateway و Compose smoke اجرا می‌شود؛ timeout60 ثانیه و label/cleanup عمومی CI حفظ‌اند.
+
+publish/rolling از نظر ابزار و context بررسی شدند: [فهرست رسمی runner Ubuntu24.04](https://raw.githubusercontent.com/actions/runner-images/main/images/ubuntu/Ubuntu2404-Readme.md) شامل gh، jq، coreutils، findutils و Docker plugins است. preflight در همان محیط، قبل از انتشار، commandهای موردنیاز و plugin Buildx را بررسی می‌کند؛ publish که ممکن است smoke تکراری داشته باشد Compose و ابزارهای fixture را نیز بررسی می‌کند. GH_TOKEN، checkout/context repository، مسیر candidate و خروجی هر دو digest موجودند. نصب پکیج اضافه یا فرض وجود rg روی host لازم نیست. تغییر application، production، security gate یا limit15 دقیقه انجام نشد.
+
+محلی:127 regression CI (شامل ترتیب مراحل، mount فقط‌خواندنی، ابزارهای محیط تست و خطای ابزار غایب)،18 assertion publish با registry ساختگی،279 قرارداد offline و16 بلوک shell workflow موفق. بررسی ignore با44 مسیر خصوصی و94 سورس واجد شرایط موفق؛ archive fixture86 فایل داشت و archive واقعی ساخته‌شده در temp،85 hash فایل و SHA256 صحیح و بدون credential/path خصوصی داشت. hashهای داده موجود بدون تغییر‌اند. Docker container invocation در Windows بدون engine اجرا نشد؛ Actions جدید شرط تأیید نهایی است. هیچ push یا دسترسی به VPS انجام نشد.
+
 ## اصلاح vulnerability gateway — run 38159228613
 
 وضعیت: **image نهایی فقط پس از قبولی Actions جدید پذیرفته می‌شود. هیچ VPS یا secret واقعی تغییر نکرده است.**

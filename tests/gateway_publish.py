@@ -33,6 +33,9 @@ for mismatch in ['none', 'runtime', 'gateway']:
             (candidate / name).write_text('sha256:' + letter * 64 + '\n', newline='\n')
         (stage / 'publish.sh').write_text(body, newline='\n')
         (binary / 'jq').write_text('#!/usr/bin/env bash\ncat >/dev/null\nprintf "sha256:%s\\n" "$(printf a%.0s {1..64})"\n', newline='\n')
+        # Publish preflight checks these tools; this fixture never uses privileges/API.
+        for command in ['gh', 'sudo']:
+            (binary / command).write_text('#!/usr/bin/env bash\nexit 0\n', newline='\n')
         (binary / 'docker').write_text('''#!/usr/bin/env bash
 echo "$*" >> "$TRACE"
 case "$*" in
