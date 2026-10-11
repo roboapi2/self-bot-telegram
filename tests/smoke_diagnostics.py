@@ -42,7 +42,7 @@ exit 0
     result = subprocess.run([args.bash, '-c',
         'test_bin="$UBCC_DIAGNOSTICS_BIN"; '
         'if command -v cygpath >/dev/null; then test_bin=$(cygpath -u "$test_bin"); export TMPDIR=$(cygpath -u "$TMPDIR"); fi; '
-        'export PATH="$test_bin:$PATH"; bash scripts/docker/ci-smoke.sh fixture-image'],
+        'export PATH="$test_bin:$PATH"; bash scripts/docker/ci-smoke.sh fixture-image fixture-gateway'],
         cwd=root, env=environment, capture_output=True, text=True, timeout=30)
     output = result.stdout + result.stderr
     assert result.returncode == 23, 'Diagnostics/cleanup masked the original smoke failure'
@@ -59,7 +59,7 @@ exit 0
     result = subprocess.run([args.bash, '-c',
         'test_bin="$UBCC_DIAGNOSTICS_BIN"; '
         'if command -v cygpath >/dev/null; then test_bin=$(cygpath -u "$test_bin"); export TMPDIR=$(cygpath -u "$TMPDIR"); fi; '
-        'export PATH="$test_bin:$PATH"; bash scripts/docker/ci-smoke.sh fixture-image'],
+        'export PATH="$test_bin:$PATH"; bash scripts/docker/ci-smoke.sh fixture-image fixture-gateway'],
         cwd=root, env=environment, capture_output=True, text=True, timeout=30)
     assert result.returncode == 23, 'Hung diagnostics masked original failure'
     assert 'Compose logs (exit 124)' in result.stderr, 'Logs did not time out'

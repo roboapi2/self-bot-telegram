@@ -4,6 +4,10 @@ workflow در `.github/workflows/cicd.yml` است. PR فقط تست و ساخت 
 
 ## Secrets لازم
 
+استقرار پیش‌فرض خاموش است. در Settings → Secrets and variables → Actions → Variables، متغیر **repository** به نام `PRODUCTION_DEPLOY_ENABLED` فقط پس از آماده شدن VPS، credentialها و آزمون CI با مقدار دقیق `true` ساخته شود. unset، `false` یا مقدار دیگر باعث skipped شدن فقط job deploy می‌شود؛ validate، انتشار GHCR و Releases فعال می‌مانند. برای توقف استقرار مقدار را `false` کنید. این متغیر secret نیست و باید در سطح repository باشد تا شرط job پیش از ورود به environment آن را ببیند. در این اصلاح هیچ متغیر یا secret واقعی تنظیم نشده است.
+
+دو package GHCR وجود دارد: `self-bot-telegram` و `self-bot-telegram-gateway`. دسترسی Actions و read:packages سرور برای هر دو لازم است. Release دو فایل digest دارد؛ runtime و gateway همان Release را با هم انتخاب کنید. manual workflow با image_digest به gateway_digest هم نیاز دارد و هر دو قبل از deploy دوباره scan و smoke می‌شوند.
+
 در GitHub: Settings → Environments → New environment → `production`. برای استقرار کاملاً خودکار required reviewer قرار ندهید؛ دسترسی محیط را به main و tagهای نسخه محدود کنید. Environment secrets:
 
 | نام | مقدار |
@@ -41,7 +45,7 @@ host key را از کنسول مورد اعتماد ارائه‌دهنده یا
 
 ## اولین اجرا و انتشار
 
-ابتدا نصب و credentialهای VPS را طبق DOCKER_INSTALL_FA انجام دهید، سپس secrets محیط را تکمیل کنید. این تغییرات را بازبینی، commit و به main push کنید. صفحه Actions باید validate، publish، rolling و deploy موفق نشان دهد. archive پاک، checksum و `IMAGE_DIGEST.txt` در Releases هستند. اگر deploy به علت آماده نبودن سرور شکست خورد، image منتشرشده باقی می‌ماند؛ پس از اصلاح سرور از Run workflow روی main و `image_digest` دقیق به شکل `sha256:` به همراه 64 رقم hex استفاده کنید.
+ابتدا نصب و credentialهای VPS را طبق DOCKER_INSTALL_FA انجام دهید، سپس secrets محیط را تکمیل کنید. این تغییرات را بازبینی، commit و به main push کنید. تا آماده شدن VPS، validate، publish و rolling باید موفق و deploy باید skipped باشد. archive پاک، checksum و `IMAGE_DIGEST.txt` و `GATEWAY_IMAGE_DIGEST.txt` در Releases هستند. اگر deploy به علت آماده نبودن سرور شکست خورد، image منتشرشده باقی می‌ماند؛ پس از اصلاح سرور از Run workflow روی main و هر دو `image_digest` و `gateway_digest` دقیق از همان Release به شکل `sha256:` به همراه64 رقم hex استفاده کنید.
 
 برای نسخه پایدار پس از بازبینی:
 

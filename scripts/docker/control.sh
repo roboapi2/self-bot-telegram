@@ -10,8 +10,10 @@ case "${1:-status}" in
     doctor) dc exec -T supervisor php /opt/app/console.php doctor ;;
     rollback)
         [[ -f "$ROOT/state/previous.env" ]] || { echo 'نسخه قبلی ثبت نشده است.' >&2; exit 1; }
+        unset UBCC_GATEWAY_IMAGE
         source "$ROOT/state/previous.env"
-        exec bash "$ROOT/scripts/docker/deploy.sh" "$UBCC_IMAGE" ;;
+        valid_gateway "${UBCC_GATEWAY_IMAGE:-}"
+        exec bash "$ROOT/scripts/docker/deploy.sh" "$UBCC_IMAGE" 0 "$UBCC_GATEWAY_IMAGE" ;;
     backup)
         lock; RUNNING=$(dc ps --status running -q); dc stop
         trap 'if [[ -n "$RUNNING" ]]; then dc up -d --wait --wait-timeout 240; fi' EXIT

@@ -3,10 +3,11 @@
 set -euo pipefail
 source "$(dirname -- "${BASH_SOURCE[0]}")/ci-common.sh"
 IMAGE=${1:?image required}
+GATEWAY_IMAGE=${2:?validated gateway image required}
 ROOT=$(mktemp -d)
 PROJECT="ubcc-ci-${RANDOM}-$$"
 export CI_DOCKER_PROJECT="$PROJECT"
-export UBCC_ROOT="$ROOT" UBCC_IMAGE="$IMAGE" DOMAIN=ci.example.invalid ACME_EMAIL=ci@example.invalid
+export UBCC_ROOT="$ROOT" UBCC_IMAGE="$IMAGE" UBCC_GATEWAY_IMAGE="$GATEWAY_IMAGE" DOMAIN=ci.example.invalid ACME_EMAIL=ci@example.invalid
 # A final always() workflow step can clean this project even after external cancellation.
 if [[ -n ${RUNNER_TEMP:-} ]]; then printf '%s\n' "$PROJECT" >> "$RUNNER_TEMP/ubcc-smoke-projects"; fi
 diagnostics() {
@@ -108,5 +109,20 @@ ci_progress 'verify persistence across full container recreation'
 dc stop --timeout 10
 dc up -d --force-recreate --wait --wait-timeout 90 nginx
 dc exec -T web php -r 'exit(file_get_contents("/opt/app/.panel/persistence-fixture")==="preserve" ? 0:1);'
+# Disable external ACME only in this isolated fixture; production config stays intact.
+ci_progress 'verify exact gateway health, proxy routes and certificate storage'
+sed -i '/    admin off/a\    auto_https off' "$ROOT/docker/Caddyfile"
+sed -i 's/^{$DOMAIN} {/http:\/\/{$DOMAIN} {/' "$ROOT/docker/Caddyfile"
+dc up -d --no-deps --wait --wait-timeout 60 gateway
+dc exec -T gateway wget -q -O /dev/null http://127.0.0.1:2016/healthz
+dc exec -T gateway sh -ec 'test -w /data && test -w /config; echo preserve > /data/ci-persistence; echo preserve > /config/ci-persistence'
+for route in config.php accounts.json .panel/accounts.json vendor/autoload.php; do
+    [[ $(dc exec -T nginx curl -s --max-time 3 -o /dev/null -w '%{http_code}' -H 'Host: ci.example.invalid' "http://gateway:8080/$route") == 404 ]]
+done
+dc up -d --no-deps --force-recreate --wait --wait-timeout 60 gateway
+dc exec -T gateway sh -ec 'test "$(cat /data/ci-persistence)" = preserve; test "$(cat /config/ci-persistence)" = preserve'
+GATEWAY_ID=$(dc ps --quiet gateway)
+[[ $(ci_run 8 'verify exact gateway image ID' docker inspect --format '{{.Image}}' "$GATEWAY_ID") == $(ci_run 8 'read validated gateway image ID' docker image inspect "$GATEWAY_IMAGE" --format '{{.Id}}') ]]
+[[ $(ci_run 8 'verify gateway isolation' docker inspect --format '{{.Config.User}} {{.HostConfig.ReadonlyRootfs}}' "$GATEWAY_ID") == '10001:10001 true' ]]
 ci_run 20 'verify image contains no runtime data' docker run --rm --label "com.docker.compose.project=$PROJECT" --entrypoint php "$IMAGE" -r 'exit(is_file("/opt/app/accounts.json") || count(glob("/opt/app/accounts/*")) || count(glob("/opt/app/.panel/*")) ? 1:0);'
 echo 'Docker health, shared PID/IPC namespace, isolated persistence and private routes passed.'

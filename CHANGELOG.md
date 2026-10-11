@@ -1,5 +1,12 @@
 # تاریخچه تغییرات
 
+## ۲۰۲۶/۱۰/۱۱ — gateway patched و opt-in استقرار
+
+- Caddy پایدار2.11.7 با Go1.26.9 و x/net0.60.0 از source و dependencyهای pin‌شده بازسازی می‌شود؛ base imageها و آرشیو source با digest/checksum ثابت‌اند.
+- runtime و gateway هر دو scan، smoke، checksum و image-ID verification دارند؛ انتشار، state و rollback هر دو digest را حفظ می‌کنند. health/privacy و persistence گواهی gateway به smoke اضافه شد.
+- job deploy فقط با repository variable `PRODUCTION_DEPLOY_ENABLED=true` فعال می‌شود؛ CI، GHCR و Releases مستقل باقی می‌مانند. validate15 دقیقه و cache/timeoutهای قبلی حفظ شدند.
+- تأیید امنیت image نهایی و استقرار منتظر Actions جدید است؛ VPS و داده خصوصی تغییر نکردند.
+
 ## ۲۰۲۶/۱۰/۱۱ — رفع deadlock و بهینه‌سازی CI
 
 - آزمون‌های یک‌بارمصرف Nginx با `--entrypoint nginx` از اجرای foreground برنامه جدا شدند.

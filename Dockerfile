@@ -20,7 +20,7 @@ RUN groupadd -g 10001 ubcc && useradd -u 10001 -g ubcc -s /usr/sbin/nologin -d /
 WORKDIR /opt/app
 COPY --from=source /build/index.php /build/api.php /build/lib.php /build/runtime.php /build/worker.php /build/supervisor.php /build/console.php /build/bot_template.php /build/qr_worker.php /build/madeline_tools.php ./
 COPY --from=dependencies /build/vendor ./vendor
-COPY --from=source /build/docker ./docker
+COPY --from=source /build/docker/entrypoint.sh /build/docker/health.php ./docker/
 COPY --from=source /build/assets ./public/assets
 COPY --from=source /build/scripts/migrate-storage.php ./scripts/migrate-storage.php
 COPY docker/config.php ./config.php

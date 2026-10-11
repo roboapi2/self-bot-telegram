@@ -1,5 +1,33 @@
 # ممیزی Docker و CI/CD — ۲۰۲۶/۱۰/۱۱
 
+## اصلاح vulnerability gateway — run 38159228613
+
+وضعیت: **image نهایی فقط پس از قبولی Actions جدید پذیرفته می‌شود. هیچ VPS یا secret واقعی تغییر نکرده است.**
+
+[log واقعی validate](https://github.com/roboapi2/self-bot-telegram/actions/runs/38159228613/job/114528457339) بررسی شد. اسکن runtime موفق و در17:23:38 UTC اسکن gateway با4 HIGH قابل اصلاح شکست خورد: CVE-2026-78669 در x/net0.59.0 و سه finding stdlib Go1.26.8 شامل CVE-2026-78667، CVE-2026-78669 و CVE-2026-97031. fixهای log، x/net0.60.0 و Go1.26.9/1.27.2 هستند. این run نشان داد اصلاح deadlock و cache مؤثر بوده و مرحله validation تا اسکن در حدود3 دقیقه رسید؛ زمان cold build جدید هنوز با Actions اندازه‌گیری نشده است.
+
+در زمان بررسی، [metadata رسمی Docker](https://raw.githubusercontent.com/docker-library/official-images/master/library/caddy) و GitHub releases آخرین stable را2.11.7 نشان دادند. registry رسمی برای tag2.11.7-alpine همان digest آسیب‌پذیر `sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f` را برگرداند؛ بنابراین tag بدون digest یا latest راه‌حل پذیرفته‌شده نیست. [Go release history](https://go.dev/doc/devel/release#go1.26.9) انتشار patch امنیتی را تأیید می‌کند؛ version و checksum x/net از Go proxy/checksum database دریافت شدند.
+
+gateway جدید:
+
+- source پایدار Caddy2.11.7 با checksum SHA256 آرشیو Go proxy ثابت است؛ main.go همان entrypoint upstream با تمام standard modules است. Caddy به عنوان dependency نسخه‌دار در build metadata باقی می‌ماند تا scanner نسخه واقعی را تشخیص دهد.
+- go.mod/go.sum کامل با ابزار Go1.26.9 ایجاد شدند؛ x/net0.60.0 pin شده است. GOTOOLCHAIN=local، go mod verify و build با -mod=readonly از تغییر خودکار toolchain/lock جلوگیری می‌کنند.
+- builder رسمی `golang:1.26.9-alpine3.23` با digest `sha256:6750308561953d451210ed1a8086d36c8c8bdcbf672d38d9d0d424b8a7a0216c` و runtime رسمی Alpine3.23 با digest `sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0` مستقیماً از registry بررسی شدند. binary statically linked و runtime فاقد compiler/package install شناور است.
+- فقط CA bundle از image Caddy رسمی pin‌شده COPY می‌شود؛ binary آسیب‌پذیر آن در image نهایی وجود ندارد. USER10001، read-only، cap_drop ALL، no-new-privileges، HTTPS خودکار و bindهای پایدار data/caddy و data/caddy-config حفظ شدند.
+- application Dockerfile فقط entrypoint و health.php موردنیاز را در مسیر docker runtime کپی می‌کند؛ سورس build gateway وارد runtime PHP نمی‌شود. پنل فارسی و داده خصوصی تغییر نکردند.
+
+زنجیره deployment:
+
+- CI با cache مستقل gateway هر دو image را اسکن می‌کند؛ HIGH/CRITICAL، ignore-unfixed و exit-code1 همان قبلی‌اند؛ هیچ CVE suppress نشده است. configuration Caddy و smoke واقعی gateway با UID/read-only، image ID دقیق، proxy privacy، health و persistence هر دو مسیر certificate بررسی می‌شوند. فقط fixture جداگانه smoke از HTTP بدون ACME خارجی استفاده می‌کند؛ Caddyfile تولیدی HTTPS خودکار دارد.
+- artifact شامل هر دو image و دو image ID با checksum tar است. publish پس از pull هر دو digest، revision و content ID را تطبیق می‌دهد. اگر هر کدام با artifact متفاوت باشند، هر دو image دوباره scan و همان pair smoke می‌شود. version/edge به هر دو image اعمال و دو فایل digest در Release قرار می‌گیرند.
+- Compose ورودی اجباری UBCC_GATEWAY_IMAGE دارد؛ deploy/SSH wrapper فقط سه آرگومان APP_DIGEST SEQUENCE GATEWAY_DIGEST معتبر را می‌پذیرند. current/previous و rollback هر دو digest را نگه می‌دارند. state قدیمی بدون gateway fail می‌شود؛ مهاجرت بازبینی‌شده در PRODUCTION_DEPLOY_FA مستند است و ابزار قدیمی خودکار نصب مجدد نمی‌شود.
+- repository variable `PRODUCTION_DEPLOY_ENABLED` فقط با مقدار دقیق true job deploy را فعال می‌کند؛ پیش‌فرض unset یعنی skipped. validate، GHCR و Releases فعال‌اند. در این کار متغیر remote تنظیم نشده است. هر دو digest برای manual workflow لازم‌اند.
+- validate15 دقیقه، smoke300 ثانیه با120 ثانیه مهلت cleanup، scanهای محدود، build cache و reuse artifact قبلی حفظ شدند. cold build Go هزینه اولیه دارد؛ compiled layer با تغییر commit یا PHP سورس دوباره ساخته نمی‌شود.
+
+آزمون محلی: PHP/shell lint،16 بلوک workflow،35 unit،160 locked update،6 migration،7 Docker config و27 HTTP موفق. regressionهای timeout/diagnostics، قراردادهای deployment/opt-in/gateway و privacy package اجرا شدند. Go module verification، build native patched و Caddyfile validation واقعی موفق؛ binary version برابر2.11.7 و build metadata برابرGo1.26.9 و x/net0.60.0 است. این build native جایگزین Docker build نیست. Linux lifecycle/rollback در container، Trivy image نهایی، health/privacy/persistence Compose و HTTPS واقعی هنوز منتظر Actions هستند. cross-compile واقعی Linux/amd64 با CGO_ENABLED=0 و -mod=readonly موفق شد و metadata همان versionهای patched را دارد. config fixture smoke نیز با Caddy native به HTTP8080 و health loopback2016 بدون ACME تبدیل و بررسی شد؛ health site تولیدی اکنون صریحاً bind127.0.0.1 دارد.
+
+نتایج نهایی offline:95 قرارداد regression CI،13 assertion diagnostics،18 assertion اجرای shell واقعی publish با registry ساختگی (تطبیق هر دو image، اختلاف runtime و اختلاف gateway)،279 قرارداد Docker/deployment موفق.44 مسیر خصوصی و94 مسیر سورس در هر دو ignore mode و archive fixture86 فایل تأیید شدند. Composer audit vulnerability گزارش نکرد؛ hashهای config/account/log بدون تغییر‌اند. ابزار Trivy0.75.0 رسمی با checksum دریافت و scan مستقل binaryهای rebuilt امتحان شد، اما دانلود DB از mirror با unexpected EOF و retry مستقیم GHCR با deadline4 دقیقه شکست خورد. بنابراین نتیجه vulnerability scan محلی موجود نیست و صفر HIGH/CRITICAL ادعا نمی‌شود. گیت Trivy کامل روی هر دو image در Actions شرط انتشار و پذیرش باقی می‌ماند. هیچ push یا deploy انجام نشده است.
+
 ## رفع deadlock و محدودسازی زمان CI — run 38141926133
 
 وضعیت: **اصلاح محلی آماده است؛ تأیید Docker فقط پس از قبولی Actions روی Ubuntu24.04.**
@@ -57,7 +85,8 @@
 
 ```bash
 docker build --target runtime -t ubcc-candidate .
-bash scripts/docker/ci-smoke.sh ubcc-candidate
+docker build -f docker/gateway/Dockerfile -t ubcc-gateway-candidate .
+bash scripts/docker/ci-smoke.sh ubcc-candidate ubcc-gateway-candidate
 ```
 
 اگر هنوز fail شد، خروجی diagnostics همین step باید بررسی شود؛ healthcheck یا security gate را حذف نکنید. اصلاح فقط پس از سبز شدن Actions پذیرفته است. گزارش بخش‌های بعد مربوط به تحویل قبلی است؛ نتایج آن جایگزین آزمون image اصلاح‌شده نیست.

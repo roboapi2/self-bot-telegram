@@ -8,7 +8,7 @@ sudo bash /opt/ubcc/scripts/docker/control.sh status
 sudo bash /opt/ubcc/scripts/docker/control.sh doctor
 ```
 
-اگر previous وجود ندارد، digest سالم را از Release قدیمی بخوانید و با `/usr/local/sbin/ubcc-deploy IMAGE@sha256:DIGEST` اجرا کنید. ورودی tag مانند edge/latest پذیرفته نمی‌شود. فرمان دستی sequence ندارد؛ deploy خودکار بعدی ممکن است نسخه جدیدتر را اعمال کند. برای توقف موقت انتشار، workflow یا دسترسی محیط production را در GitHub غیرفعال کنید. حذف/جابه‌جایی sequence راه rollback نیست.
+اگر previous وجود ندارد، digest سالم را از Release قدیمی بخوانید و با `/usr/local/sbin/ubcc-deploy IMAGE@sha256:DIGEST 0 GATEWAY_IMAGE@sha256:DIGEST` اجرا کنید. ورودی tag مانند edge/latest پذیرفته نمی‌شود. فرمان دستی sequence صفر دارد؛ deploy خودکار بعدی ممکن است نسخه جدیدتر را اعمال کند. برای توقف موقت انتشار، متغیر repository به نام PRODUCTION_DEPLOY_ENABLED را false کنید. حذف/جابه‌جایی sequence راه rollback نیست.
 
 ## Restore داده، فقط برای حادثه داده
 

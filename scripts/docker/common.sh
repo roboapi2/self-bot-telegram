@@ -11,10 +11,12 @@ source "$ROOT/settings.env"
 set +a
 [[ "$UBCC_ROOT" == "$ROOT" && "$DOMAIN" =~ ^[A-Za-z0-9][A-Za-z0-9.-]+$ ]]
 export UBCC_IMAGE="${UBCC_IMAGE:-ghcr.io/roboapi2/self-bot-telegram@sha256:$(printf '0%.0s' {1..64})}"
+export UBCC_GATEWAY_IMAGE="${UBCC_GATEWAY_IMAGE:-ghcr.io/roboapi2/self-bot-telegram-gateway@sha256:$(printf '0%.0s' {1..64})}"
 dc() { docker compose --project-name ubcc --env-file "$ROOT/settings.env" -f "$ROOT/compose.production.yml" "$@"; }
-load_current() { [[ -f "$ROOT/state/current.env" ]] || { echo 'هنوز استقرار موفقی ثبت نشده است.' >&2; return 1; }; source "$ROOT/state/current.env"; valid_image "$UBCC_IMAGE"; export UBCC_IMAGE; }
+load_current() { [[ -f "$ROOT/state/current.env" ]] || { echo 'هنوز استقرار موفقی ثبت نشده است.' >&2; return 1; }; unset UBCC_GATEWAY_IMAGE; source "$ROOT/state/current.env"; valid_image "$UBCC_IMAGE"; valid_gateway "${UBCC_GATEWAY_IMAGE:-}" || { echo 'digest gateway در state ثبت نشده؛ راهنمای مهاجرت را ببینید.' >&2; return 1; }; export UBCC_IMAGE UBCC_GATEWAY_IMAGE; }
 lock() { exec 9>"$ROOT/state/maintenance.lock"; flock -n 9 || { echo 'فرمان نگهداری دیگری فعال است.' >&2; exit 1; }; }
 valid_image() { [[ "$1" =~ ^ghcr.io/roboapi2/self-bot-telegram@sha256:[0-9a-f]{64}$ ]]; }
+valid_gateway() { [[ "$1" =~ ^ghcr.io/roboapi2/self-bot-telegram-gateway@sha256:[0-9a-f]{64}$ ]]; }
 health() {
     dc exec -T supervisor php /opt/app/console.php doctor
     for attempt in {1..36}; do

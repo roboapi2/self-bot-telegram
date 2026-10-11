@@ -10,11 +10,16 @@ name: Docker CI and production
         description: 'Optional verified sha256: digest; blank builds the selected main/version ref'
         required: false
         type: string
+      gateway_digest:
+        description: 'Required companion gateway digest when image_digest is provided'
+        required: false
+        type: string
 permissions:
   contents: read
   packages: read
 env:
   IMAGE: ghcr.io/roboapi2/self-bot-telegram
+  GATEWAY_IMAGE: ghcr.io/roboapi2/self-bot-telegram-gateway
   CI_DOCKER_PROJECT: ubcc-ci-${{ github.run_id }}-${{ github.run_attempt }}
   TRIVY_IMAGE: aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa
   GITLEAKS_IMAGE: ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
@@ -46,6 +51,7 @@ jobs:
           "$RUNNER_TEMP/contracts/bin/python" tests/docker_contracts.py
           "$RUNNER_TEMP/contracts/bin/python" tests/smoke_diagnostics.py
           "$RUNNER_TEMP/contracts/bin/python" tests/ci_pipeline.py
+          "$RUNNER_TEMP/contracts/bin/python" tests/gateway_publish.py
       - name: Secret scan (redacted)
         timeout-minutes: 2
         run: |
@@ -88,41 +94,58 @@ jobs:
           tags: ubcc-candidate
           build-args: VCS_REF=${{ github.sha }}
           cache-from: type=gha,scope=ubcc-ci,timeout=60s
+      - name: Build patched stable Caddy gateway
+        if: inputs.image_digest == ''
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
+        timeout-minutes: 6
+        with:
+          context: .
+          file: docker/gateway/Dockerfile
+          load: true
+          tags: ubcc-gateway-candidate
+          build-args: VCS_REF=${{ github.sha }}
+          cache-from: type=gha,scope=ubcc-gateway,timeout=60s
+          cache-to: type=gha,scope=ubcc-gateway,mode=max,timeout=60s,ignore-error=true
       - name: Select exact runtime image
         id: runtime
         timeout-minutes: 2
-        env: {REQUESTED: '${{ inputs.image_digest }}', GH_TOKEN: '${{ github.token }}'}
+        env: {REQUESTED: '${{ inputs.image_digest }}', REQUESTED_GATEWAY: '${{ inputs.gateway_digest }}', GH_TOKEN: '${{ github.token }}'}
         run: |
           source scripts/docker/ci-common.sh
           REF=ubcc-candidate
+          GATEWAY_REF=ubcc-gateway-candidate
           if [[ -n "$REQUESTED" ]]; then
-            [[ "$REQUESTED" =~ ^sha256:[0-9a-f]{64}$ ]]
+            [[ "$REQUESTED" =~ ^sha256:[0-9a-f]{64}$ && "$REQUESTED_GATEWAY" =~ ^sha256:[0-9a-f]{64}$ ]]
             printf '%s' "$GH_TOKEN" | ci_run 20 'GHCR read login' docker login ghcr.io -u '${{ github.actor }}' --password-stdin
             REF="$IMAGE@$REQUESTED"
             ci_run 90 'pull requested immutable image' docker pull "$REF"
+            GATEWAY_REF="$GATEWAY_IMAGE@$REQUESTED_GATEWAY"
+            ci_run 90 'pull requested immutable gateway' docker pull "$GATEWAY_REF"
+          else
+            [[ -z "$REQUESTED_GATEWAY" ]]
           fi
           echo "image=$REF" >> "$GITHUB_OUTPUT"
+          echo "gateway=$GATEWAY_REF" >> "$GITHUB_OUTPUT"
       - name: Runtime and gateway vulnerability gates
         timeout-minutes: 4
-        env: {RUNTIME_IMAGE: '${{ steps.runtime.outputs.image }}'}
+        env: {RUNTIME_IMAGE: '${{ steps.runtime.outputs.image }}', CADDY_IMAGE: '${{ steps.runtime.outputs.gateway }}'}
         run: |
           source scripts/docker/ci-common.sh
-          CADDY_IMAGE=$(sed -n 's/^    image: \(caddy:.*\)$/\1/p' compose.production.yml)
           test -n "$CADDY_IMAGE"
           for ref in "$RUNTIME_IMAGE" "$CADDY_IMAGE"; do
             ci_run 100 "Trivy scan $ref" docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$HOME/.cache/trivy:/root/.cache/" "$TRIVY_IMAGE" image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed "$ref"
           done
       - name: Gateway configuration validation
         timeout-minutes: 1
+        env: {CADDY_IMAGE: '${{ steps.runtime.outputs.gateway }}'}
         run: |
           source scripts/docker/ci-common.sh
-          CADDY_IMAGE=$(sed -n 's/^    image: \(caddy:.*\)$/\1/p' compose.production.yml)
           test -n "$CADDY_IMAGE"
           ci_run 40 'Caddy config validation' docker run --rm --read-only --user 10001:10001 --tmpfs /data:mode=1777 --tmpfs /config:mode=1777 --tmpfs /tmp:mode=1777 -e DOMAIN=ci.example.invalid -e ACME_EMAIL=ci@example.invalid -v "$PWD/docker/Caddyfile:/etc/caddy/Caddyfile:ro" "$CADDY_IMAGE" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
       - name: Runtime Compose smoke and privacy
         timeout-minutes: 7
-        env: {RUNTIME_IMAGE: '${{ steps.runtime.outputs.image }}'}
-        run: timeout --signal=TERM --kill-after=120s 300s bash scripts/docker/ci-smoke.sh "$RUNTIME_IMAGE"
+        env: {RUNTIME_IMAGE: '${{ steps.runtime.outputs.image }}', CADDY_IMAGE: '${{ steps.runtime.outputs.gateway }}'}
+        run: timeout --signal=TERM --kill-after=120s 300s bash scripts/docker/ci-smoke.sh "$RUNTIME_IMAGE" "$CADDY_IMAGE"
       - name: Create and verify clean deployment package
         timeout-minutes: 1
         run: |
@@ -134,9 +157,10 @@ jobs:
         timeout-minutes: 2
         run: |
           source scripts/docker/ci-common.sh
-          ci_run 90 'save verified candidate image' docker save ubcc-candidate -o "$RUNNER_TEMP/image.tar"
+          ci_run 90 'save verified candidate image' docker save ubcc-candidate ubcc-gateway-candidate -o "$RUNNER_TEMP/image.tar"
           (cd "$RUNNER_TEMP" && sha256sum image.tar > image.tar.sha256)
           ci_run 10 'record verified content identity' docker image inspect ubcc-candidate --format '{{.Id}}' > "$RUNNER_TEMP/IMAGE_ID.txt"
+          ci_run 10 'record verified gateway content identity' docker image inspect ubcc-gateway-candidate --format '{{.Id}}' > "$RUNNER_TEMP/GATEWAY_ID.txt"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: github.event_name != 'pull_request' && inputs.image_digest == '' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         timeout-minutes: 2
@@ -146,6 +170,7 @@ jobs:
             ${{ runner.temp }}/image.tar
             ${{ runner.temp }}/image.tar.sha256
             ${{ runner.temp }}/IMAGE_ID.txt
+            ${{ runner.temp }}/GATEWAY_ID.txt
           compression-level: 1
           retention-days: 3
           if-no-files-found: error
@@ -177,6 +202,7 @@ jobs:
     permissions: {contents: write, packages: write}
     outputs:
       digest: ${{ steps.publish.outputs.digest }}
+      gateway_digest: ${{ steps.publish.outputs.gateway_digest }}
     concurrency:
       group: publish-${{ github.repository }}-${{ github.sha }}
       cancel-in-progress: false
@@ -218,31 +244,55 @@ jobs:
           ci_run 90 'pull exact published digest' docker pull "$IMAGE@$DIGEST"
           [[ $(ci_run 10 'verify registry revision' docker inspect "$IMAGE@$DIGEST" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}') == "$GITHUB_SHA" ]]
           REMOTE_ID=$(ci_run 10 'verify registry content identity' docker image inspect "$IMAGE@$DIGEST" --format '{{.Id}}')
-          if [[ "$REMOTE_ID" != "$VERIFIED_ID" ]]; then
-            # Existing immutable SHA tag from a different build must pass the gates again.
-            ci_run 100 'rescan different existing SHA image' docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$HOME/.cache/trivy:/root/.cache/" "$TRIVY_IMAGE" image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed "$IMAGE@$DIGEST"
-            timeout --signal=TERM --kill-after=120s 300s bash scripts/docker/ci-smoke.sh "$IMAGE@$DIGEST"
+          VERIFIED_GATEWAY_ID=$(cat candidate/GATEWAY_ID.txt)
+          [[ "$VERIFIED_GATEWAY_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ $(ci_run 10 'verify loaded gateway identity' docker image inspect ubcc-gateway-candidate --format '{{.Id}}') == "$VERIFIED_GATEWAY_ID" ]]
+          status=0
+          ci_run 30 'inspect immutable gateway tag' docker buildx imagetools inspect "$GATEWAY_IMAGE:$TAG" --format '{{json .Manifest}}' > "$RUNNER_TEMP/gateway.json" 2> "$RUNNER_TEMP/gateway.err" || status=$?
+          if [[ $status -eq 0 ]]; then
+            GATEWAY_DIGEST=$(jq -r .digest "$RUNNER_TEMP/gateway.json")
           else
-            ci_progress 'Registry content matches artifact already scanned and smoke-tested by validate'
+            [[ $status -eq 1 ]] && grep -Eqi 'not found|manifest unknown|404' "$RUNNER_TEMP/gateway.err" || { cat "$RUNNER_TEMP/gateway.err" >&2; exit "$status"; }
+            ci_run 10 'tag verified gateway' docker tag ubcc-gateway-candidate "$GATEWAY_IMAGE:$TAG"
+            ci_run 120 'push verified gateway' docker push "$GATEWAY_IMAGE:$TAG"
+            GATEWAY_DIGEST=$(ci_run 30 'read published gateway digest' docker buildx imagetools inspect "$GATEWAY_IMAGE:$TAG" --format '{{json .Manifest}}' | jq -r .digest)
           fi
+          [[ "$GATEWAY_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          ci_run 90 'pull exact published gateway digest' docker pull "$GATEWAY_IMAGE@$GATEWAY_DIGEST"
+          [[ $(ci_run 10 'verify gateway registry revision' docker inspect "$GATEWAY_IMAGE@$GATEWAY_DIGEST" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}') == "$GITHUB_SHA" ]]
+          REMOTE_GATEWAY_ID=$(ci_run 10 'verify registry gateway identity' docker image inspect "$GATEWAY_IMAGE@$GATEWAY_DIGEST" --format '{{.Id}}')
+          if [[ "$REMOTE_ID" != "$VERIFIED_ID" || "$REMOTE_GATEWAY_ID" != "$VERIFIED_GATEWAY_ID" ]]; then
+            for ref in "$IMAGE@$DIGEST" "$GATEWAY_IMAGE@$GATEWAY_DIGEST"; do
+              ci_run 100 'rescan different existing SHA image pair' docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$HOME/.cache/trivy:/root/.cache/" "$TRIVY_IMAGE" image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed "$ref"
+            done
+            timeout --signal=TERM --kill-after=120s 300s bash scripts/docker/ci-smoke.sh "$IMAGE@$DIGEST" "$GATEWAY_IMAGE@$GATEWAY_DIGEST"
+          else
+            ci_progress 'Registry image pair matches artifacts already scanned and smoke-tested by validate'
+          fi
+          echo "gateway_digest=$GATEWAY_DIGEST" >> "$GITHUB_OUTPUT"
+          printf '%s@%s\n' "$GATEWAY_IMAGE" "$GATEWAY_DIGEST" > candidate/GATEWAY_IMAGE_DIGEST.txt
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
           printf '%s@%s\n' "$IMAGE" "$DIGEST" > candidate/IMAGE_DIGEST.txt
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             VERSION=${GITHUB_REF#refs/tags/}
             [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-            status=0
-            ci_run 30 'inspect version tag' docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Manifest}}' > "$RUNNER_TEMP/version.json" 2> "$RUNNER_TEMP/version.err" || status=$?
-            if [[ $status -eq 0 ]]; then
-              EXISTING=$(jq -r .digest "$RUNNER_TEMP/version.json")
-              [[ "$EXISTING" == "$DIGEST" ]]
-            else
-              [[ $status -eq 1 ]] && grep -Eqi 'not found|manifest unknown|404' "$RUNNER_TEMP/version.err" || { cat "$RUNNER_TEMP/version.err" >&2; exit "$status"; }
-              ci_run 30 'publish version reference' docker buildx imagetools create --prefer-index=false -t "$IMAGE:$VERSION" "$IMAGE@$DIGEST"
-            fi
+            for repository in "$IMAGE" "$GATEWAY_IMAGE"; do
+              version_digest=$DIGEST
+              [[ "$repository" != "$GATEWAY_IMAGE" ]] || version_digest=$GATEWAY_DIGEST
+              status=0
+              ci_run 30 'inspect version tag' docker buildx imagetools inspect "$repository:$VERSION" --format '{{json .Manifest}}' > "$RUNNER_TEMP/version.json" 2> "$RUNNER_TEMP/version.err" || status=$?
+              if [[ $status -eq 0 ]]; then
+                EXISTING=$(jq -r .digest "$RUNNER_TEMP/version.json")
+                [[ "$EXISTING" == "$version_digest" ]]
+              else
+                [[ $status -eq 1 ]] && grep -Eqi 'not found|manifest unknown|404' "$RUNNER_TEMP/version.err" || { cat "$RUNNER_TEMP/version.err" >&2; exit "$status"; }
+                ci_run 30 'publish version reference' docker buildx imagetools create --prefer-index=false -t "$repository:$VERSION" "$repository@$version_digest"
+              fi
+            done
           else
             exit 0
           fi
-          mapfile -t ASSETS < <(find candidate -type f \( -name '*.tar.gz' -o -name '*.tar.gz.sha256' -o -name IMAGE_DIGEST.txt \))
+          mapfile -t ASSETS < <(find candidate -type f \( -name '*.tar.gz' -o -name '*.tar.gz.sha256' -o -name IMAGE_DIGEST.txt -o -name GATEWAY_IMAGE_DIGEST.txt \))
           if ! gh release view "$VERSION" >/dev/null 2>&1; then
             gh release create "$VERSION" --verify-tag --title "$VERSION" --notes-file CHANGELOG.md "${ASSETS[@]}"
           fi
@@ -271,13 +321,15 @@ jobs:
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
         with: {registry: ghcr.io, username: '${{ github.actor }}', password: '${{ secrets.GITHUB_TOKEN }}'}
-      - env: {GH_TOKEN: '${{ github.token }}', DIGEST: '${{ needs.publish.outputs.digest }}'}
+      - env: {GH_TOKEN: '${{ github.token }}', DIGEST: '${{ needs.publish.outputs.digest }}', GATEWAY_DIGEST: '${{ needs.publish.outputs.gateway_digest }}'}
         run: |
           set -euo pipefail
           source scripts/docker/ci-common.sh
           HEAD=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
           [[ "$HEAD" == "$GITHUB_SHA" ]] || exit 0
           ci_run 30 'publish edge reference' docker buildx imagetools create --prefer-index=false -t "$IMAGE:edge" "$IMAGE@$DIGEST"
+          ci_run 30 'publish gateway edge reference' docker buildx imagetools create --prefer-index=false -t "$GATEWAY_IMAGE:edge" "$GATEWAY_IMAGE@$GATEWAY_DIGEST"
+          printf '%s@%s\n' "$GATEWAY_IMAGE" "$GATEWAY_DIGEST" > candidate/GATEWAY_IMAGE_DIGEST.txt
           printf '%s@%s\n' "$IMAGE" "$DIGEST" > candidate/IMAGE_DIGEST.txt
           if gh release view continuous >/dev/null 2>&1; then
             gh release edit continuous --target "$GITHUB_SHA" --prerelease --title 'Continuous verified deployment' --notes-file CHANGELOG.md
@@ -286,12 +338,12 @@ jobs:
           fi
           gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/continuous" -f sha="$GITHUB_SHA" -F force=true
           gh release view continuous --json assets --jq '.assets[].name' | while read -r asset; do gh release delete-asset continuous "$asset" --yes; done
-          mapfile -t ASSETS < <(find candidate -type f \( -name '*.tar.gz' -o -name '*.tar.gz.sha256' -o -name IMAGE_DIGEST.txt \))
+          mapfile -t ASSETS < <(find candidate -type f \( -name '*.tar.gz' -o -name '*.tar.gz.sha256' -o -name IMAGE_DIGEST.txt -o -name GATEWAY_IMAGE_DIGEST.txt \))
           gh release upload continuous "${ASSETS[@]}"
   deploy:
     needs: [validate, publish, rolling]
     if: >-
-      always() && needs.validate.result == 'success' &&
+      always() && vars.PRODUCTION_DEPLOY_ENABLED == 'true' && needs.validate.result == 'success' &&
       (needs.publish.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.image_digest != '')) &&
       (needs.rolling.result == 'success' || github.ref != 'refs/heads/main' || inputs.image_digest != '') &&
       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
@@ -306,6 +358,7 @@ jobs:
       - name: Deploy exact verified digest over pinned SSH
         env:
           DIGEST: ${{ needs.publish.outputs.digest || inputs.image_digest }}
+          GATEWAY_DIGEST: ${{ needs.publish.outputs.gateway_digest || inputs.gateway_digest }}
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_PORT: ${{ secrets.VPS_PORT }}
@@ -313,11 +366,11 @@ jobs:
           VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
-          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ && "$GATEWAY_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ "$VPS_HOST" =~ ^[A-Za-z0-9.-]+$ && "$VPS_USER" == ubcc-deploy && "$VPS_PORT" =~ ^[0-9]{1,5}$ ]]
           ((VPS_PORT > 0 && VPS_PORT <= 65535))
           install -d -m 0700 "$RUNNER_TEMP/ssh"
           printf '%s\n' "$VPS_SSH_KEY" > "$RUNNER_TEMP/ssh/key"
           printf '%s\n' "$VPS_KNOWN_HOSTS" > "$RUNNER_TEMP/ssh/known_hosts"
           chmod 0600 "$RUNNER_TEMP/ssh/"*
-          ssh -i "$RUNNER_TEMP/ssh/key" -p "$VPS_PORT" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$RUNNER_TEMP/ssh/known_hosts" -o ConnectTimeout=30 -o ServerAliveInterval=15 "$VPS_USER@$VPS_HOST" "sudo -n /usr/local/sbin/ubcc-deploy '$IMAGE@$DIGEST' '$GITHUB_RUN_NUMBER'"
+          ssh -i "$RUNNER_TEMP/ssh/key" -p "$VPS_PORT" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$RUNNER_TEMP/ssh/known_hosts" -o ConnectTimeout=30 -o ServerAliveInterval=15 "$VPS_USER@$VPS_HOST" "sudo -n /usr/local/sbin/ubcc-deploy '$IMAGE@$DIGEST' '$GITHUB_RUN_NUMBER' '$GATEWAY_IMAGE@$GATEWAY_DIGEST'"

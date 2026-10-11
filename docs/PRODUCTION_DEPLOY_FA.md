@@ -9,7 +9,7 @@
 - اجرای setup، تنظیم API/رمز قوی، آماده کردن read:packages برای image خصوصی.
 - انتقال امن داده قدیمی و توقف کامل worker قدیمی پیش از Docker.
 - کلید SSH اختصاصی، known_hosts تأییدشده و پنج secret محیط production.
-- push روی main، قبولی چهار job، مقایسه digest Release با state سرور.
+- ابتدا push روی main با استقرار غیرفعال، قبولی validate/publish/rolling؛ سپس پس از آماده کردن VPS مقدار repository variable `PRODUCTION_DEPLOY_ENABLED=true` و اجرای workflow با هر دو digest Release.
 - ورود HTTPS، ایجاد/ورود QR و 2FA، فعال‌سازی و آزمون یک حساب واقعی.
 - restart و سپس reboot، بررسی حساب و نشست بدون ورود دوباره؛ backup و آزمون restore روی سرور جداگانه.
 
@@ -34,7 +34,9 @@ Docker logها با سقف 10MB و پنج فایل برای هر سرویس نگ
 برای update دستی، digest را از انتشار تأییدشده بگیرید:
 
 ```bash
-sudo /usr/local/sbin/ubcc-deploy ghcr.io/roboapi2/self-bot-telegram@sha256:REPLACE_WITH_64_HEX_DIGEST
+sudo /usr/local/sbin/ubcc-deploy \
+  ghcr.io/roboapi2/self-bot-telegram@sha256:REPLACE_WITH_64_HEX_DIGEST 0 \
+  ghcr.io/roboapi2/self-bot-telegram-gateway@sha256:REPLACE_WITH_64_HEX_GATEWAY_DIGEST
 ```
 
 اسکریپت pull و config validation را قبل از توقف انجام می‌دهد، همه workerها را می‌بندد، backup می‌گیرد، migration را اجرا می‌کند، سرویس‌های سالم را بالا می‌آورد و HTTPS معتبر را می‌سنجد؛ سپس state موفق را ثبت می‌کند. وقفه کوتاه وجود دارد. نشست مشترک مانع blue/green هم‌زمان است. در شکست، digest قبلی با همان داده جاری بالا می‌آید. تغییر schema باید با نسخه قبلی سازگار بماند؛ migration فعلی مخرب نیست.
@@ -50,6 +52,10 @@ sudo reboot
 پس از اتصال دوباره status و doctor و ورود پنل را بررسی کنید. راه‌اندازی پس از reboot در این محیط آزمون واقعی نشده است.
 
 ## تغییر پیکربندی و ابزار میزبان
+
+نسخه جدید gateway سفارشی patched را از GHCR و فقط با digest اجرا می‌کند؛ Compose دیگر Caddy قدیمی ثابت ندارد. روی نصب Docker قبلی، قبل از فعال کردن deploy، از ابزارهای قدیمی backup بگیرید، workerها را متوقف کنید و بسته عمومی جدید شامل Compose، Caddyfile، تمام scripts/docker و wrapper `/usr/local/sbin/ubcc-deploy` را با مالک root نصب کنید؛ data/secrets/settings را بازنویسی نکنید. setup تکراری جایگزین این ارتقای بازبینی‌شده نیست.
+
+state قدیمی که فقط `UBCC_IMAGE` دارد عمداً fail می‌شود. ابتدا runtime فعلی و gateway patched انتخابی را با دو ورودی manual workflow و deploy غیرفعال scan/smoke کنید. پس از قبولی، با `sudoedit /opt/ubcc/state/current.env` فقط خط `UBCC_GATEWAY_IMAGE=ghcr.io/roboapi2/self-bot-telegram-gateway@sha256:...` تأییدشده را اضافه کنید و همان pair را با دستور سه‌آرگومانی deploy کنید. نسخه قدیمی state را در backup نگه دارید. از previous.env قدیمی بدون gateway rollback نکنید؛ helper آن را رد می‌کند. قبولی بعدی، current/previous را با هر دو digest ثبت می‌کند. فایل‌های certificate موجود در data/caddy و data/caddy-config حفظ می‌شوند. این مراحل در این محیط روی VPS اجرا نشده‌اند.
 
 قبل از sudoedit تنظیمات backup بگیرید. فایل‌ها root-controlled و secretها متعلق به UID10001 با mode0400 بمانند. تغییر `settings.env`/secretها با restart اعمال می‌شود؛ Caddy DNS جدید باید قبل از restart آماده باشد. deploy معمولی تنظیمات میزبان را تغییر نمی‌دهد و بسته backup همان تنظیمات را ثبت می‌کند. setup تکراری فایل‌های نصب‌شده را حفظ می‌کند؛ برای ارتقای خود compose یا script، diff بسته جدید را بازبینی و با backup قبلی، فایل‌های عمومی را توسط root جایگزین کنید. هرگز پوشه `data`، `secrets` یا `state` را با محتوای بسته جایگزین نکنید. برای rollback چنین ارتقایی، فایل‌های پیکربندی همان backup را انتخابی برگردانید.
 

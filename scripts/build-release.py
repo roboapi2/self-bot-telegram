@@ -36,7 +36,9 @@ files = ['index.php', 'api.php', 'lib.php', 'runtime.php', 'worker.php', 'superv
          'docs/DOCKER_INSTALL_FA.md', 'docs/CICD_FA.md', 'docs/PRODUCTION_DEPLOY_FA.md', 'docs/ROLLBACK_FA.md',
          '.gitattributes', 'docker/php.ini', 'tests/docker_config.php', 'docs/DOCKER_AUDIT_FA.md',
          'tests/smoke_diagnostics.py', 'tests/ci_pipeline.py',
-         'scripts/docker/ci-common.sh', 'scripts/docker/ci-cleanup.sh']
+         'scripts/docker/ci-common.sh', 'scripts/docker/ci-cleanup.sh',
+         'docker/gateway/Dockerfile', 'docker/gateway/go.mod', 'docker/gateway/go.sum',
+         'docker/gateway/source.sha256', 'docker/gateway/main.go', 'tests/gateway_publish.py']
 # Optional reviewed configuration example; private .env files are never included.
 if (root / '.env.example').is_file():
     files.append('.env.example')

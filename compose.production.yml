@@ -77,7 +77,7 @@ services:
       timeout: 5s
       retries: 6
   gateway:
-    image: caddy:2.11.7-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
+    image: ${UBCC_GATEWAY_IMAGE:?Use the verified gateway image digest}
     user: "10001:10001"
     read_only: true
     cap_drop: [ALL]
@@ -106,7 +106,7 @@ services:
         bind: {create_host_path: false}
     depends_on: {nginx: {condition: service_healthy}}
     healthcheck:
-      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:2016/healthz]
+      test: [CMD, wget, -q, -T, "3", -O, /dev/null, http://127.0.0.1:2016/healthz]
       interval: 15s
       timeout: 5s
       retries: 6

@@ -45,7 +45,9 @@ exit
 5. دستور اولین استقرار با digest واقعی `IMAGE_DIGEST.txt` انتشار:
 
 ```bash
-sudo /usr/local/sbin/ubcc-deploy ghcr.io/roboapi2/self-bot-telegram@sha256:REPLACE_WITH_64_HEX_DIGEST
+sudo /usr/local/sbin/ubcc-deploy \
+  ghcr.io/roboapi2/self-bot-telegram@sha256:REPLACE_WITH_64_HEX_DIGEST 0 \
+  ghcr.io/roboapi2/self-bot-telegram-gateway@sha256:REPLACE_WITH_64_HEX_GATEWAY_DIGEST
 sudo bash /opt/ubcc/scripts/docker/control.sh status
 sudo bash /opt/ubcc/scripts/docker/control.sh doctor
 curl --fail https://panel.example.com/healthz
