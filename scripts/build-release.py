@@ -4,6 +4,8 @@ import pathlib
 import shutil
 import tarfile
 import sys
+import os
+import gzip
 
 root = pathlib.Path(__file__).resolve().parent.parent
 name = sys.argv[1] if len(sys.argv) > 1 else 'ubcc-20261011'
@@ -24,7 +26,15 @@ files = ['index.php', 'api.php', 'lib.php', 'runtime.php', 'worker.php', 'superv
          'deploy/userbot-supervisor.service.in',
          'tests/clean_install.py', 'tests/concurrency.php', 'tests/linux_lifecycle.php',
          'tests/migration.php', 'tests/security_http.py', 'tests/unit.php', 'tests/ignore_release.py',
-         'docs/INSTALL_FA.md', 'docs/OPERATIONS_FA.md', 'docs/FINAL_AUDIT_FA.md', 'docs/IGNORE_AUDIT_FA.md']
+         'docs/INSTALL_FA.md', 'docs/OPERATIONS_FA.md', 'docs/FINAL_AUDIT_FA.md', 'docs/IGNORE_AUDIT_FA.md',
+         'Dockerfile', '.dockerignore', 'compose.production.yml', '.github/workflows/cicd.yml',
+         'docker/config.php', 'docker/entrypoint.sh', 'docker/health.php', 'docker/nginx.conf',
+         'docker/php-fpm.conf', 'docker/Caddyfile', 'docker/ubcc-docker.service',
+         'scripts/docker/common.sh', 'scripts/docker/setup.sh', 'scripts/docker/deploy.sh',
+         'scripts/docker/control.sh', 'scripts/docker/restore.sh', 'scripts/docker/ssh-deploy.sh',
+         'scripts/docker/ci-smoke.sh', 'tests/docker_contracts.py', 'tests/docker_deploy.sh',
+         'docs/DOCKER_INSTALL_FA.md', 'docs/CICD_FA.md', 'docs/PRODUCTION_DEPLOY_FA.md', 'docs/ROLLBACK_FA.md',
+         '.gitattributes', 'docker/php.ini', 'tests/docker_config.php', 'docs/DOCKER_AUDIT_FA.md']
 # Optional reviewed configuration example; private .env files are never included.
 if (root / '.env.example').is_file():
     files.append('.env.example')
@@ -32,7 +42,7 @@ for relative in files:
     source = root / relative
     if not source.is_file() or source.is_symlink():
         raise SystemExit('Missing/unsafe source: ' + relative)
-    if source.name in {'config.php', 'accounts.json'} or source.suffix in {'.log', '.pid'}:
+    if relative in {'config.php', 'accounts.json'} or source.suffix in {'.log', '.pid'}:
         raise SystemExit('Private file in allowlist')
     if source.suffix in {'.sh', '.in'} and b'\r\n' in source.read_bytes():
         raise SystemExit('Use LF line endings before releasing: ' + relative)
@@ -49,10 +59,14 @@ def normalize(item):
     item.uid = item.gid = 0
     item.uname = item.gname = 'root'
     item.mode = 0o755 if item.isdir() else 0o644
+    item.mtime = int(os.environ.get('SOURCE_DATE_EPOCH', '0'))
     return item
 
-with tarfile.open(archive, 'w:gz') as output:
-    output.add(destination, arcname=name, filter=lambda item: normalize(item))
+with archive.open('wb') as stream:
+    with gzip.GzipFile(filename='', mode='wb', fileobj=stream,
+                       mtime=int(os.environ.get('SOURCE_DATE_EPOCH', '0'))) as compressed:
+        with tarfile.open(fileobj=compressed, mode='w') as output:
+            output.add(destination, arcname=name, filter=normalize)
 with tarfile.open(archive, 'r:gz') as output:
     expected = {name + '/' + path for path in files} | {name + '/SHA256SUMS'}
     actual = {item.name for item in output.getmembers() if item.isfile()}

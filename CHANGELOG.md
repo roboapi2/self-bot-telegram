@@ -1,5 +1,14 @@
 # تاریخچه تغییرات
 
+## ۲۰۲۶/۱۰/۱۱ — Docker و CI/CD
+
+- Docker چندمرحله‌ای، PHP-FPM و Nginx غیر root، Caddy HTTPS و bindهای خصوصی پایدار اضافه شدند.
+- فضای PID جدا و مشترک میان وب/supervisor، heartbeat سلامت و shutdown ترتیبی با حفظ worker lockها اضافه شد.
+- GitHub Actions برای PR، main، نسخه و dispatch با اسکن امنیتی، آزمون Linux و Compose، GHCR و انتشار بسته پاک اضافه شد.
+- استقرار SSH با host key ثابت، digest immutable، قفل و sequence، backup قبل از migration و rollback image بدون بازگردانی داده اضافه شد.
+- ابزار setup/control/restore و startup پس از reboot، مستندات فارسی و آزمون قرارداد/تنظیمات/شبیه‌سازی خرابی اضافه شدند.
+- Docker context و release هر دو allowlist صریح دارند؛ نشست/config خصوصی دست‌نخورده باقی ماندند. گزارش Docker حدود آزمون محلی و پذیرش Linux/VPS را مشخص می‌کند.
+
 ## ۲۰۲۶/۱۰/۱۱ — ممیزی ignore و انتشار
 
 - قواعد `.gitignore` با مسیرهای واقعی config، حساب، نشست، QR/2FA، لاگ، پشتیبان، release و خروجی توسعه تطبیق داده شد.

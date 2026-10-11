@@ -1,0 +1,14 @@
+{
+    admin off
+    http_port 8080
+    https_port 8443
+    email {$ACME_EMAIL}
+}
+{$DOMAIN} {
+    encode gzip
+    header Strict-Transport-Security "max-age=31536000"
+    reverse_proxy nginx:8080
+}
+http://127.0.0.1:2016 {
+    respond /healthz "ok" 200
+}

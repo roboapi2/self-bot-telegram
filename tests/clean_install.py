@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import sys
+import ast
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--php', default='php')
@@ -17,13 +18,16 @@ with tempfile.TemporaryDirectory(prefix='ubcc-clean-install-') as temporary:
     stage = pathlib.Path(temporary).resolve()
     if not stage.is_relative_to(pathlib.Path(tempfile.gettempdir()).resolve()):
         raise SystemExit('Unsafe temporary path')
-    for path in root.glob('*.php'):
-        if path.name != 'config.php':
-            shutil.copyfile(path, stage / path.name)
-    for name in ['composer.json', 'composer.lock', 'install.sh', 'run.sh']:
-        shutil.copyfile(root / name, stage / name)
-    for directory in ['assets', 'scripts', 'deploy', 'tests']:
-        shutil.copytree(root / directory, stage / directory, ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+    tree = ast.parse((root / 'scripts/build-release.py').read_text(encoding='utf-8'))
+    files = next(ast.literal_eval(node.value) for node in tree.body if isinstance(node, ast.Assign)
+                 and any(isinstance(target, ast.Name) and target.id == 'files' for target in node.targets))
+    for relative in files:
+        path = root / relative
+        if path.is_symlink():
+            raise SystemExit('Unsafe source link')
+        target = stage / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, target)
     environment = os.environ.copy()
     environment.update(TEST_PHP=args.php, TEST_PYTHON=sys.executable)
     for command in [

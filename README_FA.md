@@ -2,6 +2,8 @@
 
 این پروژه، پنل موجود PHP برای مدیریت چند حساب تلگرام بر پایه MadelineProto است. فایل‌ها قبلاً در همین پوشه قرار دارند؛ نصب از همین سورس انجام می‌شود. پنل فارسی، تم روشن و تیره، ورود QR و دو مرحله‌ای، آرشیو، بازیابی حذف و ویرایش، ساعت پروفایل، کمپین و دستورهای Saved Messages حفظ شده‌اند.
 
+مسیر جدید استقرار Docker و انتشار خودکار: [نصب Docker](docs/DOCKER_INSTALL_FA.md)، [Secrets و CI/CD](docs/CICD_FA.md)، [چک‌لیست تولید و فرمان‌ها](docs/PRODUCTION_DEPLOY_FA.md)، [rollback](docs/ROLLBACK_FA.md)، [ممیزی و محدودیت آزمون‌ها](docs/DOCKER_AUDIT_FA.md). راهنمای زیر مربوط به نصب مستقیم PHP/systemd است؛ هر حساب فقط در یکی از این دو نصب فعال باشد.
+
 راهنمای تکمیل مرحله دوم: [نصب و اعتبارسنجی](docs/INSTALL_FA.md)، [عملیات و چک‌لیست حساب](docs/OPERATIONS_FA.md)، [گزارش نهایی](docs/FINAL_AUDIT_FA.md). اسکریپت بررسی واقعی VPS: `sudo bash scripts/validate-vps.sh`.
 
 ## ۱. پیش‌نیاز و محل پروژه

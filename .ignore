@@ -44,3 +44,11 @@ __pycache__/
 /graphify-out/*
 !/graphify-out/ARCHITECTURE_FA.md
 !/graphify-out/GRAPH_REPORT.md
+
+# Local Docker deployment state and credentials (public docker/ source stays visible)
+/data/
+/secrets/
+/state/
+/settings.env
+compose.override.yml
+compose.override.yaml

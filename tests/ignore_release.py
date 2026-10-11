@@ -37,7 +37,9 @@ ignored = ['config.php', 'config.php.bak', 'accounts.json', 'accounts.json.saved
            'config.backup', 'backups/private.tar.gz', 'releases/fixture.tar.gz',
            'backup_beta/old.php', 'extracted/old.php', 'vendor/autoload.php',
            'tests/__pycache__/fixture.pyc', 'tests/fixture.pyo', '.claude/settings.local.json',
-           'audit/phase2-verification.json', 'graphify-out/graph.json', 'graphify-out/.graphify_detect.json']
+           'audit/phase2-verification.json', 'graphify-out/graph.json', 'graphify-out/.graphify_detect.json',
+           'data/accounts/session.madeline', 'secrets/config.php', 'state/current.env',
+           'settings.env', 'compose.override.yml', 'compose.override.yaml']
 visible = files + ['.env.example', 'nested/.env.example', 'tests/fixtures/sanitized/config.php',
                    'tests/fixtures/sanitized/accounts.json', 'tests/fixtures/sanitized/archive.json',
                    'legacy-src/reviewed-bot.php', '.claude/commands/review.md',

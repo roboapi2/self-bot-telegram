@@ -15,6 +15,7 @@ $retry = [];
 while ($running) {
     clearstatcache();
     try {
+        json_write_atomic($panel . '/supervisor.health.json', ['pid' => getmypid(), 'time' => time()]);
         foreach (load_accounts() as $key => $account) {
             with_file_lock(account_dir($key) . '/lifecycle.lock', static function () use ($key, &$retry, &$running): void {
                 if (!$running) return;

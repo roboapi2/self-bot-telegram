@@ -1,0 +1,17 @@
+[Unit]
+Description=UBCC ordered Docker Compose startup
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+ConditionPathExists=/opt/ubcc/state/current.env
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash /opt/ubcc/scripts/docker/control.sh start
+ExecStop=/bin/bash /opt/ubcc/scripts/docker/control.sh stop
+TimeoutStartSec=720
+TimeoutStopSec=180
+
+[Install]
+WantedBy=multi-user.target
