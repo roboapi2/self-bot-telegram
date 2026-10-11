@@ -1,0 +1,34 @@
+limit_req_zone $binary_remote_addr zone=ubcc_login:10m rate=10r/m;
+server {
+    # Local-only until HTTPS is configured, accessible through an SSH tunnel.
+    listen 127.0.0.1:8080;
+    server_name @DOMAIN@;
+    root @ROOT@;
+    index index.php;
+    client_max_body_size 1m;
+    server_tokens off;
+    access_log off; # Do not store peers, filenames or query parameters.
+    error_log /var/log/nginx/ubcc-error.log warn;
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header Referrer-Policy no-referrer always;
+    location = / { rewrite ^ /index.php last; }
+    location = /index.php {
+        limit_req zone=ubcc_login burst=10 nodelay;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME @ROOT@/index.php;
+        fastcgi_param HTTPS $https if_not_empty;
+        fastcgi_pass unix:/run/php/ubcc.sock;
+        fastcgi_read_timeout 120s;
+    }
+    location = /api.php {
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME @ROOT@/api.php;
+        fastcgi_param HTTPS $https if_not_empty;
+        fastcgi_pass unix:/run/php/ubcc.sock;
+        fastcgi_read_timeout 120s;
+    }
+    location = /assets/app.js { }
+    location = /assets/styles.css { }
+    location / { return 404; }
+}

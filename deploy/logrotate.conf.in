@@ -1,0 +1,12 @@
+@ROOT@/accounts/*/bot.log @ROOT@/accounts/*/qr_worker.log @ROOT@/.panel/php-error.log {
+    su ubcc ubcc
+    daily
+    maxsize 10M
+    rotate 7
+    missingok
+    notifempty
+    copytruncate
+    compress
+    delaycompress
+    create 0600 ubcc ubcc
+}

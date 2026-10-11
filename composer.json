@@ -1,0 +1,14 @@
+{
+  "name": "gozargah/userbot-control-center",
+  "description": "Professional multi-account Telegram userbot control panel built on MadelineProto.",
+  "type": "project",
+  "require": {
+    "php": ">=8.2",
+    "ext-json": "*",
+    "ext-mbstring": "*",
+    "danog/madelineproto": "^8",
+    "amphp/file": "^3"
+  },
+  "minimum-stability": "stable",
+  "prefer-stable": true
+}

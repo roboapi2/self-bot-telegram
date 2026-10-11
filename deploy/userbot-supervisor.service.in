@@ -1,0 +1,31 @@
+[Unit]
+Description=UserBot account supervisor
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=ubcc
+Group=ubcc
+WorkingDirectory=@ROOT@
+Environment=UBCC_PROCESS_MODE=supervisor
+Environment=UBCC_PHP_BIN=@PHP_BIN@
+ExecStart=@PHP_BIN@ @ROOT@/supervisor.php
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=120
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=@ROOT@/accounts @ROOT@/.panel
+ProtectHome=true
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
