@@ -95,3 +95,6 @@ scripts/docker/**
 !docs/DOCKER_AUDIT_FA.md
 !.env.example
 !tests/smoke_diagnostics.py
+!tests/ci_pipeline.py
+!scripts/docker/ci-common.sh
+!scripts/docker/ci-cleanup.sh

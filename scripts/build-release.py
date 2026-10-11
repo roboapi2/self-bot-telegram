@@ -35,7 +35,8 @@ files = ['index.php', 'api.php', 'lib.php', 'runtime.php', 'worker.php', 'superv
          'scripts/docker/ci-smoke.sh', 'tests/docker_contracts.py', 'tests/docker_deploy.sh',
          'docs/DOCKER_INSTALL_FA.md', 'docs/CICD_FA.md', 'docs/PRODUCTION_DEPLOY_FA.md', 'docs/ROLLBACK_FA.md',
          '.gitattributes', 'docker/php.ini', 'tests/docker_config.php', 'docs/DOCKER_AUDIT_FA.md',
-         'tests/smoke_diagnostics.py']
+         'tests/smoke_diagnostics.py', 'tests/ci_pipeline.py',
+         'scripts/docker/ci-common.sh', 'scripts/docker/ci-cleanup.sh']
 # Optional reviewed configuration example; private .env files are never included.
 if (root / '.env.example').is_file():
     files.append('.env.example')

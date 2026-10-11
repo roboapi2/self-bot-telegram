@@ -1,5 +1,34 @@
 # ممیزی Docker و CI/CD — ۲۰۲۶/۱۰/۱۱
 
+## رفع deadlock و محدودسازی زمان CI — run 38141926133
+
+وضعیت: **اصلاح محلی آماده است؛ تأیید Docker فقط پس از قبولی Actions روی Ubuntu24.04.**
+
+در [run شکست‌خورده](https://github.com/roboapi2/self-bot-telegram/actions/runs/38141926133)، Nginx در 13:10:30 UTC موفقیت configuration test را چاپ کرد، اما validate در 13:52:45 UTC لغو شد. علت این توقف با بررسی entrypoint تأیید شد: `dc run --rm --no-deps nginx nginx -t` به entrypoint برنامه می‌رسید؛ شاخه nginx پس از `nginx -t`، سرور را با `daemon off` اجرا می‌کند. بنابراین فرمان configuration test تمام نمی‌شد. هر دو آزمون یک‌بارمصرف، شامل diagnostics، اکنون دقیقاً `dc run --rm --no-deps --entrypoint nginx nginx -t` هستند. آزمون داخل container فعال (`exec`) نیازی به override ندارد.
+
+محدودیت‌ها و cleanup:
+
+- validate حداکثر15 دقیقه؛ بدنه smoke حداکثر300 ثانیه با120 ثانیه مهلت مستقل برای trap و cleanup؛ step حداکثر7 دقیقه. این سقف‌ها جایگزین hang42 دقیقه‌ای شده‌اند.
+- هر Compose command با GNU timeout اجرا می‌شود: up100، run30، restart/stop25، down20، ps/logs5 و سایر فرمان‌ها15 ثانیه. health waitهای Compose نیز صریحاً30/60/90 ثانیه‌اند. restart health retry سقف45 ثانیه دارد.
+- diagnostics بودجه جداگانه دارد: Nginx test8 ثانیه، inspect3 ثانیه برای حداکثر5 container؛ ps/logs تمام containerها را پوشش می‌دهند. kill-after در cleanup یک ثانیه است تا جمع بدترین بودجه‌های تشخیص و cleanup در مهلت120 ثانیه باقی بماند. exit code شکست اصلی حفظ می‌شود.
+- خروجی START/END با timestamp UTC روی stderr است؛ stdout فرمان‌های inspect و HTTP برای assertionها پاک باقی می‌ماند.
+- پس از down، containerهای باقی‌مانده با label پروژه تصادفی `ubcc-ci-*` force-remove و خالی بودن inventory بررسی می‌شود. تمام Docker runهای workflow نیز label پروژه مخصوص run دارند؛ step نهایی `always()` آن‌ها و پروژه‌های smoke ثبت‌شده را پاک می‌کند. helper پروژه تولیدی را رد می‌کند و هیچ volume را حذف نمی‌کند. اگر daemon پاسخ ندهد cleanup سریع fail می‌شود؛ حذف واقعی در این حالت قابل تضمین نیست و runner GitHub موقتی است.
+
+بهینه‌سازی بدون حذف گیت:
+
+- target CI وارث runtime است؛ ابتدا CI با shared runtime layers ساخته و سپس runtime از همان builder/cache بارگذاری می‌شود. build اضافه برای export سورس حذف شده؛ canary privacy مستقیم در image CI بررسی می‌شود.
+- BuildKit GHA cache، دانلودهای pip و پایگاه Trivy cache می‌شوند. cache دیتابیس روزانه refresh می‌شود؛ اسکن HIGH/CRITICAL همچنان اجرا می‌شود. فقط شکست export اختیاری cache قابل چشم‌پوشی است؛ build و security gate خطا را عبور نمی‌دهند.
+- PHP/HTTP/Linux lifecycle، Composer audit، Gitleaks، Trivy runtime و gateway، Caddy config، Compose health/privacy/persistence و rollback mock حفظ شده‌اند. manual digest دقیقاً روی image درخواست‌شده scan/smoke می‌شود.
+- image فقط برای انتشار ذخیره می‌شود؛ artifact تصویر از بسته deployment جداست و rolling فقط بسته کوچک را دانلود می‌کند. checksum tar و image ID هنگام publish کنترل می‌شوند. پس از pull digest رجیستری، revision و image ID با artifact آزموده‌شده تطبیق دارند. فقط در تطبیق دقیق، scan/smoke تکراری حذف می‌شود؛ SHA tag موجود با image ID متفاوت دوباره scan/smoke می‌شود. خطای timeout/auth/network هنگام بررسی tag، به معنی نبود tag پذیرفته نمی‌شود.
+- هدف5 تا10 دقیقه برای validate معمولی با cache گرم است؛ هنوز زمان واقعی نسخه اصلاح‌شده اندازه‌گیری نشده و cold build/download ممکن است طولانی‌تر باشد.
+
+اعتبارسنجی محلی:
+
+- lint PHP/shell و16 بلوک shell workflow موفق؛35 unit،160 locked updates،6 migration،7 Docker configuration و27 HTTP موفق. lifecycle Linux محلی به علت Windows/نبود pcntl/posix skip شد.
+-62 regression CI با Nginx ساختگی و GNU timeout واقعی: رفتار entrypoint قدیمی، خروج سریع فرمان مستقیم، kill فرآیند مقاوم به TERM، timestamp، label one-off و رد cleanup تولیدی بررسی شدند.
+-13 assertion diagnostics با Docker ساختگی، شامل logs معلق، حفظ exit23 و حذف orphan؛265 قرارداد offline موفق شدند.44 مسیر خصوصی و88 مسیر سورس در هر دو ignore mode بررسی و بسته fixture80 فایل تأیید شد. Composer audit آسیب‌پذیری گزارش نکرد و hashهای config/account/log بدون تغییر بودند. این نتایج اجرای Docker واقعی محسوب نمی‌شوند.
+- build، Trivy/Gitleaks داخل container، Compose، healthcheck واقعی، rollback Linux و smoke image اصلاح‌شده محلی اجرا نشدند؛ engine موجود نیست. VPS تولیدی دست‌نخورده است. قبولی run جدید Actions شرط پذیرش نهایی است.
+
 ## اصلاح شکست Nginx در run 38138518842
 
 وضعیت این اصلاح: **تا قبولی GitHub Actions تأیید نهایی نشده است.**

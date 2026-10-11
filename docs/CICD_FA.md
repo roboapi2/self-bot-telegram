@@ -54,6 +54,10 @@ tag نسخه منتشرشده را جابه‌جا نکنید. tag SHA موجو�
 
 ## گیت‌های کیفیت
 
+validate سقف15 دقیقه دارد؛ smoke بدنه300 ثانیه و120 ثانیه فرصت cleanup دارد. START/END timestamp UTC و exit code هر عملیات در log ظاهر می‌شوند. در شکست، وضعیت Compose، logs، health inspect محدود و `nginx -t` مستقل چاپ می‌شود؛ سپس cleanup پروژه آزمایشی و step نهایی `always()` اجرا می‌شوند. فرمان یک‌بارمصرف صحیح `docker compose ... run --rm --no-deps --entrypoint nginx nginx -t` است؛ بدون override، entrypoint برنامه سرور را در foreground نگه می‌دارد.
+
+BuildKit، pip و دیتابیس Trivy cache می‌شوند؛ گیت‌های امنیتی در هر run اجرا می‌شوند. image artifact دارای checksum و image ID است و publish آن‌ها را با تصویر رجیستری تطبیق می‌دهد. تصویر یکسان از گیت‌های validate استفاده می‌کند؛ SHA tag موجود با محتوای متفاوت دوباره scan/smoke می‌شود. بسته deployment جدا از image artifact است تا rolling تصویر حجیم را دوباره دانلود نکند. هدف validate معمولی با cache گرم5 تا10 دقیقه است؛ قبولی و زمان واقعی فقط از run جدید Actions تعیین می‌شود.
+
 Linux CI قراردادهای بسته/ignore، اسکن redacted با Gitleaks، تست PHP و lifecycle لینوکس، composer audit، ساخت Docker، Trivy برای HIGH/CRITICAL قابل اصلاح و smoke واقعی Compose را اجرا می‌کند. آسیب‌پذیری فاقد fix با `--ignore-unfixed` مانع انتشار نیست؛ وضعیت آن را جداگانه بررسی کنید. manual digest نیز scan و smoke می‌شود. تست smoke داده مصنوعی دارد و Telegram واقعی را فعال نمی‌کند. actionها با SHA و imageهای پایه و Caddy با digest pin شده‌اند؛ ارتقاهای امنیتی را با PR، بررسی digest و همین CI انجام دهید.
 
 اگر گیت شکست خورد، انتشار/استقرار انجام نمی‌شود؛ خطای dependency را با اصلاح lockfile و آزمون دوباره رفع کنید، گیت را صرفاً برای سبز شدن حذف نکنید. ساخت و اتصال VPS در محیط فعلی محلی اجرا نشده‌اند؛ اولین اجرای GitHub Actions شرط پذیرش Docker این نسخه است.

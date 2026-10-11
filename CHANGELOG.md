@@ -1,5 +1,12 @@
 # تاریخچه تغییرات
 
+## ۲۰۲۶/۱۰/۱۱ — رفع deadlock و بهینه‌سازی CI
+
+- آزمون‌های یک‌بارمصرف Nginx با `--entrypoint nginx` از اجرای foreground برنامه جدا شدند.
+- timeout مستقل برای عملیات Docker/Compose، timestamp، diagnostics محدود و cleanup orphanهای CI اضافه شد؛ validate15 دقیقه و smoke300 ثانیه با مهلت cleanup دارد.
+- cache لایه‌های build و scanner/pip، artifact دارای checksum/image ID و انتقال جداگانه بسته کوچک اضافه شد؛ تکرار scan/smoke فقط پس از تطبیق هویت image حذف می‌شود.
+- regression برای entrypoint، timeout/kill، diagnostics معلق و cleanup اضافه شد؛ تمام گیت‌های امنیت، persistence و rollback حفظ شدند. تأیید Docker منتظر Actions است.
+
 ## ۲۰۲۶/۱۰/۱۱ — اصلاح startup و diagnostics Nginx
 
 - مسیرهای proxy/uWSGI/SCGI نیز به tmpfs `/tmp` منتقل شدند تا Nginx با UID10001 و filesystem فقط‌خواندنی به defaultهای `/var/lib/nginx` وابسته نباشد.

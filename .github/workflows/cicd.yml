@@ -15,77 +15,165 @@ permissions:
   packages: read
 env:
   IMAGE: ghcr.io/roboapi2/self-bot-telegram
+  CI_DOCKER_PROJECT: ubcc-ci-${{ github.run_id }}-${{ github.run_attempt }}
+  TRIVY_IMAGE: aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa
+  GITLEAKS_IMAGE: ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
 jobs:
   validate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {fetch-depth: 0, persist-credentials: false}
+        with: {fetch-depth: 1, persist-credentials: false}
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Cache date
+        run: echo "CACHE_DAY=$(date -u +%Y-%m-%d)" >> "$GITHUB_ENV"
+      - name: Restore scanner database and pip downloads
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        timeout-minutes: 2
+        with:
+          path: |
+            ~/.cache/trivy
+            ~/.cache/pip
+          key: ci-tools-${{ runner.os }}-trivy075-pyyaml603-${{ env.CACHE_DAY }}
+          restore-keys: ci-tools-${{ runner.os }}-trivy075-pyyaml603-
       - name: Contracts and tracked private files
+        timeout-minutes: 2
         run: |
+          source scripts/docker/ci-common.sh
           python3 -m venv "$RUNNER_TEMP/contracts"
-          "$RUNNER_TEMP/contracts/bin/pip" install PyYAML==6.0.3
+          ci_run 45 'install contract parser' "$RUNNER_TEMP/contracts/bin/pip" install PyYAML==6.0.3
           "$RUNNER_TEMP/contracts/bin/python" tests/docker_contracts.py
           "$RUNNER_TEMP/contracts/bin/python" tests/smoke_diagnostics.py
+          "$RUNNER_TEMP/contracts/bin/python" tests/ci_pipeline.py
       - name: Secret scan (redacted)
-        run: docker run --rm -v "$PWD:/repo:ro" ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f dir /repo --redact --no-banner
-      - name: PHP Linux tests and dependency audit
+        timeout-minutes: 2
+        run: |
+          source scripts/docker/ci-common.sh
+          ci_run 90 'Gitleaks worktree scan' docker run --rm -v "$PWD:/repo:ro" "$GITLEAKS_IMAGE" dir /repo --redact --no-banner
+      - name: Poison build context with synthetic private files
         run: |
           test ! -e docker/private-context-fixture
           test ! -e scripts/docker/private-context-fixture
           printf 'PRIVATE_CONTEXT_CANARY' > docker/private-context-fixture
           printf 'PRIVATE_CONTEXT_CANARY' > scripts/docker/private-context-fixture
-          docker build --target source -t ubcc-context .
-          docker run --rm --entrypoint sh ubcc-context -ec 'test ! -e /build/docker/private-context-fixture; test ! -e /build/scripts/docker/private-context-fixture; test ! -e /build/config.php; test ! -e /build/accounts.json; test ! -d /build/.git'
+      - name: Build CI and shared runtime layers once
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        timeout-minutes: 6
+        with:
+          context: .
+          target: ci
+          load: true
+          tags: ubcc-ci
+          build-args: VCS_REF=${{ github.sha }}
+          cache-from: type=gha,scope=ubcc-ci,timeout=60s
+          cache-to: type=gha,scope=ubcc-ci,mode=max,timeout=60s,ignore-error=true
+      - name: PHP Linux tests, rollback and dependency audit
+        timeout-minutes: 4
+        run: |
+          source scripts/docker/ci-common.sh
+          ci_run 15 'verify source context privacy' docker run --rm --entrypoint sh ubcc-ci -ec 'test ! -e /opt/ci/docker/private-context-fixture; test ! -e /opt/ci/scripts/docker/private-context-fixture; test ! -e /opt/ci/config.php; test ! -e /opt/ci/accounts.json; test ! -d /opt/ci/.git'
           rm docker/private-context-fixture scripts/docker/private-context-fixture
-          docker build --pull --target ci -t ubcc-ci .
-          docker run --rm ubcc-ci bash scripts/test.sh
-          docker run --rm -e UBCC_ISOLATED_DEPLOY_TEST=1 ubcc-ci bash tests/docker_deploy.sh
-          docker run --rm ubcc-ci composer audit --locked --no-dev
-          docker run --rm ubcc-ci python3 tests/ignore_release.py
-      - name: Build exact candidate
-        run: docker build --target runtime --build-arg VCS_REF="$GITHUB_SHA" -t ubcc-candidate .
-      - name: Image vulnerability gate
+          ci_run 150 'PHP, HTTP and Linux lifecycle tests' docker run --rm ubcc-ci bash scripts/test.sh
+          ci_run 20 'rollback and persistent data mock' docker run --rm -e UBCC_ISOLATED_DEPLOY_TEST=1 ubcc-ci bash tests/docker_deploy.sh
+          ci_run 45 'Composer dependency audit' docker run --rm ubcc-ci composer audit --locked --no-dev
+      - name: Load exact candidate from shared build layers
+        if: inputs.image_digest == ''
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
+        timeout-minutes: 2
+        with:
+          context: .
+          target: runtime
+          load: true
+          tags: ubcc-candidate
+          build-args: VCS_REF=${{ github.sha }}
+          cache-from: type=gha,scope=ubcc-ci,timeout=60s
+      - name: Select exact runtime image
+        id: runtime
+        timeout-minutes: 2
+        env: {REQUESTED: '${{ inputs.image_digest }}', GH_TOKEN: '${{ github.token }}'}
         run: |
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$HOME/.cache/trivy:/root/.cache/" aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed ubcc-candidate
-      - name: Runtime Compose smoke and privacy
+          source scripts/docker/ci-common.sh
+          REF=ubcc-candidate
+          if [[ -n "$REQUESTED" ]]; then
+            [[ "$REQUESTED" =~ ^sha256:[0-9a-f]{64}$ ]]
+            printf '%s' "$GH_TOKEN" | ci_run 20 'GHCR read login' docker login ghcr.io -u '${{ github.actor }}' --password-stdin
+            REF="$IMAGE@$REQUESTED"
+            ci_run 90 'pull requested immutable image' docker pull "$REF"
+          fi
+          echo "image=$REF" >> "$GITHUB_OUTPUT"
+      - name: Runtime and gateway vulnerability gates
+        timeout-minutes: 4
+        env: {RUNTIME_IMAGE: '${{ steps.runtime.outputs.image }}'}
         run: |
-          bash scripts/docker/ci-smoke.sh ubcc-candidate
+          source scripts/docker/ci-common.sh
           CADDY_IMAGE=$(sed -n 's/^    image: \(caddy:.*\)$/\1/p' compose.production.yml)
           test -n "$CADDY_IMAGE"
-          docker run --rm --read-only --user 10001:10001 --tmpfs /data:mode=1777 --tmpfs /config:mode=1777 --tmpfs /tmp:mode=1777 -e DOMAIN=ci.example.invalid -e ACME_EMAIL=ci@example.invalid -v "$PWD/docker/Caddyfile:/etc/caddy/Caddyfile:ro" "$CADDY_IMAGE" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
-          docker run --rm aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed "$CADDY_IMAGE"
-      - name: Verify requested manual digest
-        if: github.event_name == 'workflow_dispatch' && inputs.image_digest != ''
-        env: {REQUESTED: '${{ inputs.image_digest }}'}
+          for ref in "$RUNTIME_IMAGE" "$CADDY_IMAGE"; do
+            ci_run 100 "Trivy scan $ref" docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$HOME/.cache/trivy:/root/.cache/" "$TRIVY_IMAGE" image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed "$ref"
+          done
+      - name: Gateway configuration validation
+        timeout-minutes: 1
         run: |
-          [[ "$REQUESTED" =~ ^sha256:[0-9a-f]{64}$ ]]
-          printf '%s' '${{ secrets.GITHUB_TOKEN }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
-          docker pull "$IMAGE@$REQUESTED"
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed "$IMAGE@$REQUESTED"
-          bash scripts/docker/ci-smoke.sh "$IMAGE@$REQUESTED"
-      - name: Create clean deployment artifact
+          source scripts/docker/ci-common.sh
+          CADDY_IMAGE=$(sed -n 's/^    image: \(caddy:.*\)$/\1/p' compose.production.yml)
+          test -n "$CADDY_IMAGE"
+          ci_run 40 'Caddy config validation' docker run --rm --read-only --user 10001:10001 --tmpfs /data:mode=1777 --tmpfs /config:mode=1777 --tmpfs /tmp:mode=1777 -e DOMAIN=ci.example.invalid -e ACME_EMAIL=ci@example.invalid -v "$PWD/docker/Caddyfile:/etc/caddy/Caddyfile:ro" "$CADDY_IMAGE" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+      - name: Runtime Compose smoke and privacy
+        timeout-minutes: 7
+        env: {RUNTIME_IMAGE: '${{ steps.runtime.outputs.image }}'}
+        run: timeout --signal=TERM --kill-after=120s 300s bash scripts/docker/ci-smoke.sh "$RUNTIME_IMAGE"
+      - name: Create and verify clean deployment package
+        timeout-minutes: 1
         run: |
           export SOURCE_DATE_EPOCH=$(git show -s --format=%ct "$GITHUB_SHA")
           python3 scripts/build-release.py "ubcc-$GITHUB_SHA"
           python3 tests/ignore_release.py --archive "releases/ubcc-$GITHUB_SHA.tar.gz"
-          docker save ubcc-candidate -o "$RUNNER_TEMP/image.tar"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - name: Save verified image and identity for publication
+        if: github.event_name != 'pull_request' && inputs.image_digest == '' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        timeout-minutes: 2
+        run: |
+          source scripts/docker/ci-common.sh
+          ci_run 90 'save verified candidate image' docker save ubcc-candidate -o "$RUNNER_TEMP/image.tar"
+          (cd "$RUNNER_TEMP" && sha256sum image.tar > image.tar.sha256)
+          ci_run 10 'record verified content identity' docker image inspect ubcc-candidate --format '{{.Id}}' > "$RUNNER_TEMP/IMAGE_ID.txt"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: github.event_name != 'pull_request' && inputs.image_digest == '' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        timeout-minutes: 2
         with:
-          name: verified-candidate
+          name: verified-image
           path: |
             ${{ runner.temp }}/image.tar
+            ${{ runner.temp }}/image.tar.sha256
+            ${{ runner.temp }}/IMAGE_ID.txt
+          compression-level: 1
+          retention-days: 3
+          if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: github.event_name != 'pull_request' && inputs.image_digest == '' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        timeout-minutes: 1
+        with:
+          name: deployment-package
+          path: |
             releases/ubcc-*.tar.gz
             releases/ubcc-*.tar.gz.sha256
           retention-days: 3
           if-no-files-found: error
+      - name: Final cleanup of interrupted smoke projects
+        if: always()
+        timeout-minutes: 2
+        run: |
+          status=0
+          bash scripts/docker/ci-cleanup.sh "$CI_DOCKER_PROJECT" || status=1
+          if [[ -f "$RUNNER_TEMP/ubcc-smoke-projects" ]]; then
+            while IFS= read -r project; do bash scripts/docker/ci-cleanup.sh "$project" || status=1; done < "$RUNNER_TEMP/ubcc-smoke-projects"
+          fi
+          exit "$status"
   publish:
     needs: validate
     if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) && inputs.image_digest == ''
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 15
     permissions: {contents: write, packages: write}
     outputs:
       digest: ${{ steps.publish.outputs.digest }}
@@ -96,40 +184,60 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: {persist-credentials: false}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with: {name: verified-candidate, path: candidate}
+        with: {name: verified-image, path: candidate}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with: {name: deployment-package, path: candidate}
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with: {registry: ghcr.io, username: '${{ github.actor }}', password: '${{ secrets.GITHUB_TOKEN }}'}
       - id: publish
+        timeout-minutes: 12
         env: {GH_TOKEN: '${{ github.token }}'}
         run: |
           set -euo pipefail
+          source scripts/docker/ci-common.sh
+          (cd candidate && sha256sum -c image.tar.sha256)
           FILE=$(find candidate -name image.tar -print -quit)
-          docker load -i "$FILE"
+          ci_run 90 'load verified image artifact' docker load -i "$FILE"
+          VERIFIED_ID=$(cat candidate/IMAGE_ID.txt)
+          [[ "$VERIFIED_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ $(ci_run 10 'verify loaded image identity' docker image inspect ubcc-candidate --format '{{.Id}}') == "$VERIFIED_ID" ]]
           TAG="sha-$GITHUB_SHA"
-          if docker buildx imagetools inspect "$IMAGE:$TAG" >/dev/null 2>&1; then
-            DIGEST=$(docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{json .Manifest}}' | jq -r .digest)
-            docker pull "$IMAGE@$DIGEST"
-            [[ $(docker inspect "$IMAGE@$DIGEST" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}') == "$GITHUB_SHA" ]]
+          status=0
+          ci_run 30 'inspect immutable SHA tag' docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{json .Manifest}}' > "$RUNNER_TEMP/manifest.json" 2> "$RUNNER_TEMP/manifest.err" || status=$?
+          if [[ $status -eq 0 ]]; then
+            DIGEST=$(jq -r .digest "$RUNNER_TEMP/manifest.json")
           else
-            docker tag ubcc-candidate "$IMAGE:$TAG"
-            docker push "$IMAGE:$TAG"
-            DIGEST=$(docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{json .Manifest}}' | jq -r .digest)
+            # A timeout/auth/network failure is not proof that a tag is absent.
+            [[ $status -eq 1 ]] && grep -Eqi 'not found|manifest unknown|404' "$RUNNER_TEMP/manifest.err" || { cat "$RUNNER_TEMP/manifest.err" >&2; exit "$status"; }
+            ci_run 10 'tag verified artifact' docker tag ubcc-candidate "$IMAGE:$TAG"
+            ci_run 120 'push verified artifact' docker push "$IMAGE:$TAG"
+            DIGEST=$(ci_run 30 'read published digest' docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{json .Manifest}}' | jq -r .digest)
           fi
           [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
-          docker pull "$IMAGE@$DIGEST"
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed "$IMAGE@$DIGEST"
-          bash scripts/docker/ci-smoke.sh "$IMAGE@$DIGEST"
+          ci_run 90 'pull exact published digest' docker pull "$IMAGE@$DIGEST"
+          [[ $(ci_run 10 'verify registry revision' docker inspect "$IMAGE@$DIGEST" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}') == "$GITHUB_SHA" ]]
+          REMOTE_ID=$(ci_run 10 'verify registry content identity' docker image inspect "$IMAGE@$DIGEST" --format '{{.Id}}')
+          if [[ "$REMOTE_ID" != "$VERIFIED_ID" ]]; then
+            # Existing immutable SHA tag from a different build must pass the gates again.
+            ci_run 100 'rescan different existing SHA image' docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$HOME/.cache/trivy:/root/.cache/" "$TRIVY_IMAGE" image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed "$IMAGE@$DIGEST"
+            timeout --signal=TERM --kill-after=120s 300s bash scripts/docker/ci-smoke.sh "$IMAGE@$DIGEST"
+          else
+            ci_progress 'Registry content matches artifact already scanned and smoke-tested by validate'
+          fi
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
           printf '%s@%s\n' "$IMAGE" "$DIGEST" > candidate/IMAGE_DIGEST.txt
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             VERSION=${GITHUB_REF#refs/tags/}
             [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-            if docker buildx imagetools inspect "$IMAGE:$VERSION" >/dev/null 2>&1; then
-              EXISTING=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Manifest}}' | jq -r .digest)
+            status=0
+            ci_run 30 'inspect version tag' docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Manifest}}' > "$RUNNER_TEMP/version.json" 2> "$RUNNER_TEMP/version.err" || status=$?
+            if [[ $status -eq 0 ]]; then
+              EXISTING=$(jq -r .digest "$RUNNER_TEMP/version.json")
               [[ "$EXISTING" == "$DIGEST" ]]
             else
-              docker buildx imagetools create --prefer-index=false -t "$IMAGE:$VERSION" "$IMAGE@$DIGEST"
+              [[ $status -eq 1 ]] && grep -Eqi 'not found|manifest unknown|404' "$RUNNER_TEMP/version.err" || { cat "$RUNNER_TEMP/version.err" >&2; exit "$status"; }
+              ci_run 30 'publish version reference' docker buildx imagetools create --prefer-index=false -t "$IMAGE:$VERSION" "$IMAGE@$DIGEST"
             fi
           else
             exit 0
@@ -138,6 +246,16 @@ jobs:
           if ! gh release view "$VERSION" >/dev/null 2>&1; then
             gh release create "$VERSION" --verify-tag --title "$VERSION" --notes-file CHANGELOG.md "${ASSETS[@]}"
           fi
+      - name: Final cleanup of interrupted publish smoke
+        if: always()
+        timeout-minutes: 2
+        run: |
+          status=0
+          bash scripts/docker/ci-cleanup.sh "$CI_DOCKER_PROJECT" || status=1
+          if [[ -f "$RUNNER_TEMP/ubcc-smoke-projects" ]]; then
+            while IFS= read -r project; do bash scripts/docker/ci-cleanup.sh "$project" || status=1; done < "$RUNNER_TEMP/ubcc-smoke-projects"
+          fi
+          exit "$status"
   rolling:
     needs: publish
     if: github.ref == 'refs/heads/main'
@@ -149,16 +267,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with: {persist-credentials: false}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        with: {name: verified-candidate, path: candidate}
+        with: {name: deployment-package, path: candidate}
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
         with: {registry: ghcr.io, username: '${{ github.actor }}', password: '${{ secrets.GITHUB_TOKEN }}'}
       - env: {GH_TOKEN: '${{ github.token }}', DIGEST: '${{ needs.publish.outputs.digest }}'}
         run: |
           set -euo pipefail
+          source scripts/docker/ci-common.sh
           HEAD=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
           [[ "$HEAD" == "$GITHUB_SHA" ]] || exit 0
-          docker buildx imagetools create --prefer-index=false -t "$IMAGE:edge" "$IMAGE@$DIGEST"
+          ci_run 30 'publish edge reference' docker buildx imagetools create --prefer-index=false -t "$IMAGE:edge" "$IMAGE@$DIGEST"
           printf '%s@%s\n' "$IMAGE" "$DIGEST" > candidate/IMAGE_DIGEST.txt
           if gh release view continuous >/dev/null 2>&1; then
             gh release edit continuous --target "$GITHUB_SHA" --prerelease --title 'Continuous verified deployment' --notes-file CHANGELOG.md
