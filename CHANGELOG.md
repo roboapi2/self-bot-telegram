@@ -1,5 +1,12 @@
 # تاریخچه تغییرات
 
+## ۲۰۲۶/۱۰/۱۱ — اصلاح startup و diagnostics Nginx
+
+- مسیرهای proxy/uWSGI/SCGI نیز به tmpfs `/tmp` منتقل شدند تا Nginx با UID10001 و filesystem فقط‌خواندنی به defaultهای `/var/lib/nginx` وابسته نباشد.
+- `nginx -t` قبل از startup و در Compose smoke، بررسی temp directories/UID/read-only و timeout محدود curl اضافه شدند.
+- شکست smoke پیش از cleanup وضعیت، logs، health inspect محدود و آزمون مستقل Nginx را چاپ می‌کند؛ env خصوصی چاپ و خطای اصلی با diagnostics پوشانده نمی‌شود.
+- آزمون failure diagnostics با Docker ساختگی و گیت CI آن اضافه شد. اعتبارسنجی واقعی این اصلاح منتظر قبولی Actions است؛ VPS تولیدی تغییر نکرد.
+
 ## ۲۰۲۶/۱۰/۱۱ — Docker و CI/CD
 
 - Docker چندمرحله‌ای، PHP-FPM و Nginx غیر root، Caddy HTTPS و bindهای خصوصی پایدار اضافه شدند.

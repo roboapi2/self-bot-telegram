@@ -94,3 +94,4 @@ scripts/docker/**
 !tests/docker_config.php
 !docs/DOCKER_AUDIT_FA.md
 !.env.example
+!tests/smoke_diagnostics.py

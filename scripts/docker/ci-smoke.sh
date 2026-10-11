@@ -5,9 +5,29 @@ IMAGE=${1:?image required}
 ROOT=$(mktemp -d)
 PROJECT="ubcc-ci-${RANDOM}-$$"
 export UBCC_ROOT="$ROOT" UBCC_IMAGE="$IMAGE" DOMAIN=ci.example.invalid ACME_EMAIL=ci@example.invalid
+diagnostics() {
+    echo '::group::Compose smoke failure: container status, logs and health'
+    dc ps --all || true
+    dc logs --no-color --tail 150 || true
+    local ids=() id
+    mapfile -t ids < <(dc ps --all --quiet)
+    for id in "${ids[@]}"; do
+        # Omit Config.Env and full inspect: they can contain credentials.
+        docker inspect --format '{{.Name}} state={{json .State}} user={{.Config.User}} readonly={{.HostConfig.ReadonlyRootfs}} cap_drop={{json .HostConfig.CapDrop}} security_opt={{json .HostConfig.SecurityOpt}} tmpfs={{json .HostConfig.Tmpfs}}' "$id" || true
+    done
+    # Works even if the normal Nginx container is restarting or has exited.
+    dc run --rm --no-deps nginx nginx -t || true
+    echo '::endgroup::'
+}
+dc() { docker compose -p "$PROJECT" -f compose.production.yml "$@"; }
 cleanup() {
+    local status=$?
+    trap - EXIT
+    set +e
+    if [[ $status -ne 0 ]]; then diagnostics; fi
     docker compose -p "$PROJECT" -f compose.production.yml down --remove-orphans >/dev/null 2>&1 || true
     [[ "$ROOT" == /tmp/tmp.* && -d "$ROOT" && ! -L "$ROOT" ]] && sudo rm -rf -- "$ROOT"
+    exit "$status"
 }
 trap cleanup EXIT
 mkdir -p "$ROOT/data/"{accounts,panel,caddy,caddy-config} "$ROOT/data/panel/"{sessions,throttle} "$ROOT/secrets" "$ROOT/docker"
@@ -21,11 +41,18 @@ sudo chown 10001:10001 "$ROOT/secrets/config.php"
 sudo chmod 0400 "$ROOT/secrets/config.php"
 chmod 0700 "$ROOT/secrets"
 chmod 0600 "$ROOT/secrets/app.env"
-dc() { docker compose -p "$PROJECT" -f compose.production.yml "$@"; }
 dc config --quiet
 dc up -d --wait --wait-timeout 60 runtime
 dc run --rm --no-deps supervisor init
+dc up -d --wait --wait-timeout 180 web
+# Same UID, readonly root, tmpfs and network/DNS as production.
+dc run --rm --no-deps nginx nginx -t
 dc up -d --wait --wait-timeout 180 nginx
+dc exec -T nginx nginx -t
+dc exec -T nginx curl -fsS --max-time 3 http://127.0.0.1:8080/healthz
+NGINX_ID=$(dc ps --quiet nginx)
+[[ $(docker inspect --format '{{.Config.User}} {{.HostConfig.ReadonlyRootfs}}' "$NGINX_ID") == '10001:10001 true' ]]
+dc exec -T nginx sh -ec 'for path in /tmp/client /tmp/fastcgi /tmp/proxy /tmp/uwsgi /tmp/scgi; do test -d "$path" && test -w "$path"; done; test ! -w /etc/nginx/nginx.conf'
 dc exec -T web php /opt/app/docker/health.php web
 dc exec -T supervisor php /opt/app/docker/health.php supervisor
 dc exec -T web php -r 'require "/opt/app/lib.php"; $h=read_json_file("/opt/app/.panel/supervisor.health.json"); exit(is_file("/proc/".$h["pid"]."/cmdline") ? 0 : 1);'
