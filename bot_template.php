@@ -1,7 +1,6 @@
 <?php
 
 declare(strict_types=1);
-if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
 require_once __DIR__ . '/lib.php';
 
 $autoloadCandidates = [
@@ -45,6 +44,8 @@ use function Amp\File\createDirectory;
 use function Amp\File\read;
 use function Amp\File\write;
 use function Amp\File\deleteFile;
+use function Amp\File\openFile;
+use function Amp\ByteStream\pipe;
 
 class UserBot extends SimpleEventHandler
 {
@@ -55,6 +56,12 @@ class UserBot extends SimpleEventHandler
 
     private bool $autoProcessing = false;
     private bool $personalProcessing = false;
+
+    private function runtimeActive(): bool
+    {
+        $key = basename($this->dataDir());
+        return valid_account_key($key) && is_file($this->dataDir() . '/enabled') && lifecycle_status($key)['running'];
+    }
 
     /**
      * Per-account data directory. Set via the UBCC_ACCOUNT_DIR env var so a
@@ -112,7 +119,11 @@ class UserBot extends SimpleEventHandler
                 $ext = pathinfo((string) $mediaPath, PATHINFO_EXTENSION);
                 $mediaArchivedName = 'arch_' . date('Ymd_His') . '_' . substr(sha1((string) $mediaPath . random_int(1, 999999)), 0, 8) . ($ext !== '' ? '.' . $ext : '');
                 try {
-                    write($dir . '/' . $mediaArchivedName, read((string) $mediaPath));
+                    $source = openFile((string) $mediaPath, 'r');
+                    try {
+                        $target = openFile($dir . '/' . $mediaArchivedName, 'w');
+                        try { pipe($source, $target); } finally { $target->close(); }
+                    } finally { $source->close(); }
                 } catch (\Throwable $e) {
                     $mediaArchivedName = null;
                 }
@@ -155,7 +166,7 @@ class UserBot extends SimpleEventHandler
             $this->saveJsonFile($this->deletedArchiveFile(), $archive);
             echo "ARCHIVED ({$type}) id=" . ($item['id'] ?? '?') . PHP_EOL;
         } catch (\Throwable $e) {
-            echo "Archive deleted item failed: {$e->getMessage()}" . PHP_EOL;
+            echo "Archive deleted item failed: [content omitted]" . PHP_EOL;
         }
     }
 
@@ -714,7 +725,7 @@ class UserBot extends SimpleEventHandler
                 return $p;
             }
         } catch (\Throwable $e) {
-            echo "DL(message) failed {$message->id}: {$e->getMessage()}" . PHP_EOL;
+            echo "DL(message) failed {$message->id}: [content omitted]" . PHP_EOL;
         }
 
         // Self-destruct / view-once / protected media often only resolves when the
@@ -727,7 +738,7 @@ class UserBot extends SimpleEventHandler
                     return $p;
                 }
             } catch (\Throwable $e) {
-                echo "DL(media-object) failed {$message->id}: {$e->getMessage()}" . PHP_EOL;
+                echo "DL(media-object) failed {$message->id}: [content omitted]" . PHP_EOL;
             }
         }
 
@@ -909,7 +920,7 @@ class UserBot extends SimpleEventHandler
             $this->sendReportText($targetPeer, $report);
             echo "VIEWONCE-SEND: report sent OK" . PHP_EOL;
         } catch (\Throwable $e) {
-            echo "VIEWONCE-SEND: report FAILED: {$e->getMessage()}" . PHP_EOL;
+            echo "VIEWONCE-SEND: report FAILED: [content omitted]" . PHP_EOL;
         }
 
         if ($mediaPath !== null && isFile($mediaPath)) {
@@ -922,7 +933,7 @@ class UserBot extends SimpleEventHandler
                 );
                 echo "VIEWONCE-SEND: media sent OK ({$mediaType})" . PHP_EOL;
             } catch (\Throwable $e) {
-                echo "VIEWONCE-SEND: media FAILED: {$e->getMessage()}" . PHP_EOL;
+                echo "VIEWONCE-SEND: media FAILED: [content omitted]" . PHP_EOL;
                 try {
                     $this->sendReportText($targetPeer, "⚠️ ارسال مدیای یکبارمصرف خطا داد:\n" . $e->getMessage());
                 } catch (\Throwable $e2) {
@@ -1034,7 +1045,7 @@ class UserBot extends SimpleEventHandler
             // Top-level type from getInfo: user / bot / chat / supergroup / channel.
             $result['type'] = strtolower((string) ($info['type'] ?? ''));
         } catch (\Throwable $e) {
-            echo "Peer info failed for {$peer}: {$e->getMessage()}" . PHP_EOL;
+            echo "Peer info failed for {$peer}: [content omitted]" . PHP_EOL;
         }
 
         return $result;
@@ -1066,7 +1077,7 @@ class UserBot extends SimpleEventHandler
         // دستورهای مدیریتی و جواب‌های مرحله‌ای ارسال خودکار را قبول می‌کنیم.
         // در بعضی نسخه‌های MadelineProto، chatId در Saved Messages با self id برابر نمی‌شود.
         if (str_starts_with($text, '/auto') || str_starts_with($text, '/clock') || str_starts_with($text, '/delete') || str_starts_with($text, '/edit') || str_starts_with($text, '/help') || str_starts_with($text, '/send_personal') || $hasActiveAutoSetup || $hasActivePersonalSetup) {
-            echo "COMMAND accepted: {$text} chatId=" . ($message->chatId ?? 'null') . " step=" . ($state['step'] ?? '-') . PHP_EOL;
+            echo "COMMAND accepted: [content omitted] chatId=" . ($message->chatId ?? 'null') . " step=" . ($state['step'] ?? '-') . PHP_EOL;
             return true;
         }
 
@@ -1151,13 +1162,14 @@ class UserBot extends SimpleEventHandler
     #[Handler]
     public function editCommand(Message $message): void
     {
+        if (!$this->runtimeActive()) return;
         $text = trim($message->message ?? '');
 
         if (!str_starts_with($text, '/edit')) {
             return;
         }
 
-        echo "EDIT COMMAND seen: {$text} chatId=" . ($message->chatId ?? 'null') . PHP_EOL;
+        echo "EDIT COMMAND seen: [content omitted] chatId=" . ($message->chatId ?? 'null') . PHP_EOL;
 
         if ($this->isBotPromptText($text) || $this->shouldIgnoreSelfMessage($text)) {
             return;
@@ -1249,13 +1261,14 @@ class UserBot extends SimpleEventHandler
     #[Handler]
     public function deleteCommand(Message $message): void
     {
+        if (!$this->runtimeActive()) return;
         $text = trim($message->message ?? '');
 
         if (!str_starts_with($text, '/delete')) {
             return;
         }
 
-        echo "DELETE COMMAND seen: {$text} chatId=" . ($message->chatId ?? 'null') . PHP_EOL;
+        echo "DELETE COMMAND seen: [content omitted] chatId=" . ($message->chatId ?? 'null') . PHP_EOL;
 
         if ($this->isBotPromptText($text) || $this->shouldIgnoreSelfMessage($text)) {
             return;
@@ -1371,6 +1384,7 @@ class UserBot extends SimpleEventHandler
     #[Handler]
     public function helpCommand(Message $message): void
     {
+        if (!$this->runtimeActive()) return;
         $text = trim($message->message ?? '');
 
         if ($text !== '/help') {
@@ -1385,6 +1399,7 @@ class UserBot extends SimpleEventHandler
     #[Handler]
     public function autoCommand(Message $message): void
     {
+        if (!$this->runtimeActive()) return;
         $text = trim($message->message ?? '');
 
         if ($text === '') {
@@ -1406,7 +1421,7 @@ class UserBot extends SimpleEventHandler
             return;
         }
 
-        echo "AUTO HANDLER seen: {$text} chatId=" . ($message->chatId ?? 'null') . " step=" . ($state['step'] ?? '-') . PHP_EOL;
+        echo "AUTO HANDLER seen: [content omitted] chatId=" . ($message->chatId ?? 'null') . " step=" . ($state['step'] ?? '-') . PHP_EOL;
 
         if (!$this->isSavedMessages($message)) {
             return;
@@ -1580,6 +1595,7 @@ class UserBot extends SimpleEventHandler
     #[Handler]
     public function personalSendCommand(Message $message): void
     {
+        if (!$this->runtimeActive()) return;
         $text = trim($message->message ?? '');
 
         if ($text === '') {
@@ -1729,7 +1745,7 @@ class UserBot extends SimpleEventHandler
                     $this->sendSelf("✅ پیام شخصی برای {$r['username']} ارسال شد.");
                     delay(2);
                 } catch (\Throwable $e) {
-                    echo "PERSONAL {$jid}: failed to send to {$r['username']}: {$e->getMessage()}" . PHP_EOL;
+                    echo "PERSONAL {$jid}: failed to send to {$r['username']}: [content omitted]" . PHP_EOL;
 
                     if (preg_match('/FLOOD_WAIT_(\d+)/', $e->getMessage(), $fm)) {
                         $wait = (int) $fm[1] + 5;
@@ -1816,7 +1832,7 @@ class UserBot extends SimpleEventHandler
                     echo "AUTO {$id}: sent to {$target}" . PHP_EOL;
                     delay(2);
                 } catch (\Throwable $e) {
-                    echo "AUTO {$id}: failed to send to {$target}: {$e->getMessage()}" . PHP_EOL;
+                    echo "AUTO {$id}: failed to send to {$target}: [content omitted]" . PHP_EOL;
 
                     if (preg_match('/FLOOD_WAIT_(\d+)/', $e->getMessage(), $m)) {
                         $wait = (int) $m[1] + 5;
@@ -1851,6 +1867,7 @@ class UserBot extends SimpleEventHandler
     #[Handler]
     public function clockCommand(Message $message): void
     {
+        if (!$this->runtimeActive()) return;
         $text = trim($message->message ?? '');
 
         if ($text !== '/clock on' && $text !== '/clock off') {
@@ -1926,17 +1943,25 @@ class UserBot extends SimpleEventHandler
             last_name: $baseLastName
         );
 
-        echo "Profile clock updated: {$newFirstName}" . PHP_EOL;
+        echo "Profile clock updated: [content omitted]" . PHP_EOL;
     }
 
     public function onStart(): void
     {
-        echo "UserBot started. Commands are active. Cron jobs are active." . PHP_EOL;
+        worker_stage('handler_initialization');
+        echo "UserBot handler initialization started; readiness pending." . PHP_EOL;
+    }
+
+    #[Cron(period: 5.0)]
+    public function lifecycleHeartbeat(): void
+    {
+        worker_heartbeat();
     }
 
     #[Cron(period: 60.0)]
     public function clockCron(): void
     {
+        if (!$this->runtimeActive()) return;
         try {
             $state = $this->loadClockState();
 
@@ -1964,13 +1989,14 @@ class UserBot extends SimpleEventHandler
                 $this->updateProfileClockOnce();
             }
         } catch (\Throwable $e) {
-            echo "Clock cron error: {$e->getMessage()}" . PHP_EOL;
+            echo "Clock cron error: [content omitted]" . PHP_EOL;
         }
     }
 
     #[Cron(period: 10.0)]
     public function autoCron(): void
     {
+        if (!$this->runtimeActive()) return;
         if ($this->autoProcessing) {
             return;
         }
@@ -1980,7 +2006,7 @@ class UserBot extends SimpleEventHandler
         try {
             $this->processAutoCampaigns();
         } catch (\Throwable $e) {
-            echo "Auto campaign cron error: {$e->getMessage()}" . PHP_EOL;
+            echo "Auto campaign cron error: [content omitted]" . PHP_EOL;
         } finally {
             $this->autoProcessing = false;
         }
@@ -1989,6 +2015,7 @@ class UserBot extends SimpleEventHandler
     #[Cron(period: 15.0)]
     public function personalSendCron(): void
     {
+        if (!$this->runtimeActive()) return;
         if ($this->personalProcessing) {
             return;
         }
@@ -1998,7 +2025,7 @@ class UserBot extends SimpleEventHandler
         try {
             $this->processPersonalSends();
         } catch (\Throwable $e) {
-            echo "Personal send cron error: {$e->getMessage()}" . PHP_EOL;
+            echo "Personal send cron error: [content omitted]" . PHP_EOL;
         } finally {
             $this->personalProcessing = false;
         }
@@ -2007,6 +2034,7 @@ class UserBot extends SimpleEventHandler
     #[Handler]
     public function saveIncoming(Incoming&IsNotEdited&Message $message): void
     {
+        if (!$this->runtimeActive()) return;
         $this->ensureMediaDir();
 
         $text = trim($message->message ?? '');
@@ -2072,6 +2100,7 @@ class UserBot extends SimpleEventHandler
     #[Handler]
     public function editedIncoming(Incoming&IsEdited&Message $message): void
     {
+        if (!$this->runtimeActive()) return;
         $editState = $this->loadEditState();
 
         if (!($editState['enabled'] ?? true)) {
@@ -2186,6 +2215,7 @@ class UserBot extends SimpleEventHandler
     #[Handler]
     public function deletedPrivateOrGroup(DeleteMessages $event): void
     {
+        if (!$this->runtimeActive()) return;
         echo "DELETE event private/group ids=" . implode(',', $event->ids) . PHP_EOL;
 
         if ($this->recoverFullChatIfHistoryDeleted(array_map('intval', $event->ids), null)) {
@@ -2200,6 +2230,7 @@ class UserBot extends SimpleEventHandler
     #[Handler]
     public function deletedChannel(DeleteChannelMessages $event): void
     {
+        if (!$this->runtimeActive()) return;
         echo "DELETE event channel chat={$event->chatId} ids=" . implode(',', $event->ids) . PHP_EOL;
 
         if ($this->recoverFullChatIfHistoryDeleted(array_map('intval', $event->ids), $event->chatId)) {
@@ -2416,7 +2447,7 @@ class UserBot extends SimpleEventHandler
                 default => $this->sendDocument(peer: $targetPeer, file: $file, caption: $shortCaption),
             };
         } catch (\Throwable $e) {
-            echo "Send typed media failed, fallback to document: {$e->getMessage()}" . PHP_EOL;
+            echo "Send typed media failed, fallback to document: [content omitted]" . PHP_EOL;
 
             try {
                 $this->sendDocument(
@@ -2568,12 +2599,18 @@ class UserBot extends SimpleEventHandler
             try {
                 deleteFile($mediaPath);
             } catch (\Throwable $e) {
-                echo "Delete local media failed: {$e->getMessage()}" . PHP_EOL;
+                echo "Delete local media failed: [content omitted]" . PHP_EOL;
             }
         }
     }
 }
 
+// MadelineProto includes this file to restore UserBot. Definition loading must
+// never launch a second client or exit because launcher environment is absent.
+if (!defined('UBCC_WORKER_RUNNER') && realpath($_SERVER['SCRIPT_FILENAME'] ?? '') !== __FILE__) return;
+if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
+
+worker_stage('session_restoration');
 $apiId = (int) (getenv('TG_API_ID') ?: 0);
 $apiHash = (string) (getenv('TG_API_HASH') ?: '');
 $sessionPath = (string) (getenv('TG_SESSION') ?: (__DIR__ . '/session.madeline'));

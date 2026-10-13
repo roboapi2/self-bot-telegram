@@ -29,10 +29,24 @@ try {
             foreach ($errors as $error) fwrite(STDERR, $error . "\n");
             echo $errors ? "بررسی اولیه ناموفق بود\n" : "بررسی اولیه موفق بود\n";
             exit($errors ? 1 : 0);
-        case 'status':
+        case 'status': case 'diagnose':
             $rows = [];
-            foreach (load_accounts() as $key => $acc) $rows[] = ['key' => $key, 'running' => account_status($acc)['running'], 'enabled' => is_file(account_dir($key) . '/enabled')];
-            echo json_encode($rows, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) . "\n";
+            foreach (load_accounts() as $key => $acc) {
+                $s = lifecycle_status($key);
+                $rows[] = ['key' => $key, 'state' => $s['state'], 'running' => $s['running'], 'enabled' => $s['enabled'],
+                    'process_alive' => $s['process_alive'], 'stage' => $s['stage'] ?? null, 'last_attempt' => $s['last_attempt'] ?? null,
+                    'attempts' => $s['attempts'] ?? 0, 'retry_at' => $s['retry_at'] ?? null,
+                    'failure' => isset($s['failure']) && is_array($s['failure'])
+                        ? array_intersect_key($s['failure'], array_flip(['category', 'time', 'exit_code', 'class', 'file', 'line'])) : null];
+            }
+            $output = $command === 'diagnose' ? [
+                'php' => PHP_VERSION, 'os' => PHP_OS_FAMILY, 'process_mode' => cfg()['process_mode'],
+                'application_writable' => is_writable(base_dir()), 'accounts_writable' => is_writable(accounts_dir()),
+                'panel_writable' => is_writable(base_dir() . '/.panel'),
+                'supervisor' => array_intersect_key((array) read_json_file(base_dir() . '/.panel/supervisor.health.json', []), array_flip(['pid', 'time', 'scan_completed', 'accounts_checked'])),
+                'accounts' => $rows,
+            ] : $rows;
+            echo json_encode($output, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) . "\n";
             break;
         case 'start': case 'stop': case 'restart':
             $key = (string) ($argv[2] ?? '');
@@ -53,6 +67,6 @@ try {
             $r = restart_running_accounts();
             echo json_encode($r, JSON_UNESCAPED_UNICODE) . "\n";
             exit($r['failed'] ? 1 : 0);
-        default: echo "Usage: php console.php doctor|status|start KEY|stop KEY|restart KEY|start-all|stop-all|restart-running\n";
+        default: echo "Usage: php console.php doctor|status|diagnose|start KEY|stop KEY|restart KEY|start-all|stop-all|restart-running\n";
     }
 } catch (Throwable $e) { fwrite(STDERR, redact_secrets($e->getMessage()) . "\n"); exit(1); }

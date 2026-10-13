@@ -75,6 +75,12 @@ with tempfile.TemporaryDirectory(prefix='ubcc-http-') as work:
         check(json.loads(body)['ok'], 'create account with CSRF')
         code, body, _ = request(c, '/api.php?action=accounts')
         check(len(json.loads(body)['accounts']) == 1, 'account persisted')
+        status = json.loads(body)['accounts'][0]['status']
+        check(status['state'] == 'stopped' and not status['running'], 'API distinguishes readiness from request')
+        (fixture / 'accounts/test/session.madeline').write_text('SYNTHETIC_SESSION')
+        (fixture / 'accounts/test/qr_state.json').write_text('{"logged_in":true}')
+        _, invalid_start, _ = request(c, '/api.php?action=start', {'key':'test', 'csrf':csrf})
+        check(not json.loads(invalid_start)['ok'] and not (fixture / 'accounts/test/enabled').exists(), 'invalid API configuration cannot queue a worker')
         code, _, _ = request(c, '/api.php?action=account&key=../test')
         check(code == 400, 'account traversal blocked')
         request(c, '/api.php?action=logout', {'csrf': csrf})

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/vendor/autoload.php';
 require_once __DIR__ . '/lib.php';
+require_once __DIR__ . '/bot_template.php';
 
 use danog\MadelineProto\API;
 use danog\MadelineProto\Settings;
@@ -16,6 +17,9 @@ function make_api(string $key): API
 {
     $cfg   = cfg();
     $paths = account_paths($key);
+    putenv('UBCC_ACCOUNT_DIR=' . $paths['dir']);
+    putenv('UBCC_ACCOUNT_KEY=' . $key);
+    putenv('TG_TIMEZONE=' . $cfg['timezone']);
 
     initialize_madeline_runtime();
     $settings = new Settings;
@@ -25,7 +29,10 @@ function make_api(string $key): API
     $settings->setAppInfo($appInfo);
     configure_madeline_logger($settings);
 
-    return new API($paths['session'], $settings);
+    $api = new API($paths['session'], $settings);
+    // A stopped session may remember UserBot. Retire the handler, not its auth.
+    if (!is_file($paths['dir'] . '/enabled') && !worker_running($key)) $api->unsetEventHandler();
+    return $api;
 }
 
 function find_value(array $data, string $key): mixed
@@ -102,14 +109,24 @@ function peer_kind(array $info): string
 
 function message_media_kind(array $m): string
 {
-    $json = strtolower(json_encode($m, JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR) ?: '');
-    if (str_contains($json, 'messagemediaphoto') || str_contains($json, 'photo')) return 'photo';
-    if (str_contains($json, 'video'))     return 'video';
-    if (str_contains($json, 'document'))  return 'document';
-    if (str_contains($json, 'geo_point') || str_contains($json, 'geopoint')) return 'location';
-    if (str_contains($json, 'phone_number') || str_contains($json, 'vcard')) return 'contact';
-    if (str_contains($json, 'poll'))      return 'poll';
-    if (str_contains($json, 'sticker'))   return 'sticker';
+    $media = $m['media'] ?? [];
+    if (!is_array($media)) return '';
+    $type = strtolower((string) ($media['_'] ?? ''));
+    if ($type === 'messagemediaphoto') return 'photo';
+    if ($type === 'messagemediadocument') {
+        foreach ($media['document']['attributes'] ?? [] as $attribute) {
+            switch ($attribute['_'] ?? '') {
+                case 'documentAttributeSticker': return 'sticker';
+                case 'documentAttributeAnimated': return 'gif';
+                case 'documentAttributeVideo': return 'video';
+                case 'documentAttributeAudio': return !empty($attribute['voice']) ? 'voice' : 'audio';
+            }
+        }
+        return 'document';
+    }
+    if (in_array($type, ['messagemediageo', 'messagemediageolive', 'messagemediavenue'], true)) return 'location';
+    if ($type === 'messagemediacontact') return 'contact';
+    if ($type === 'messagemediapoll') return 'poll';
     return '';
 }
 

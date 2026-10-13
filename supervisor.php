@@ -11,35 +11,33 @@ $running = true;
 pcntl_async_signals(true);
 pcntl_signal(SIGTERM, static function () use (&$running): void { $running = false; });
 pcntl_signal(SIGINT, static function () use (&$running): void { $running = false; });
-$retry = [];
 while ($running) {
     clearstatcache();
     try {
-        json_write_atomic($panel . '/supervisor.health.json', ['pid' => getmypid(), 'time' => time()]);
-        foreach (load_accounts() as $key => $account) {
-            with_file_lock(account_dir($key) . '/lifecycle.lock', static function () use ($key, &$retry, &$running): void {
-                if (!$running) return;
-                $p = account_paths($key);
-                if (is_file($p['dir'] . '/qr.requested')) {
-                    if (!terminate_worker($key)) return;
-                    if (!worker_running($key, 'qr')) {
-                        $r = launch_worker($key, 'qr');
-                        if (!$r['ok']) json_write_atomic($p['qr_state'], ['ok' => false, 'status' => 'error', 'message' => $r['error']]);
-                    }
-                    @unlink($p['dir'] . '/qr.requested');
-                }
-                if (is_file($p['dir'] . '/enabled')) {
-                    if (is_logged_in($key) && !worker_running($key) && !worker_running($key, 'qr') && time() >= ($retry[$key] ?? 0)) {
-                        $r = launch_worker($key, 'bot');
-                        $retry[$key] = time() + 30;
-                        if (!$r['ok']) error_log('Account worker launch failed; inspect account log.');
-                    }
-                } elseif (worker_running($key)) terminate_worker($key);
-            });
+        $accounts = load_accounts();
+        foreach ($accounts as $key => $account) {
+            if (!$running) break;
+            try { supervise_account($key); }
+            catch (Throwable $e) {
+                try { lifecycle_failure($key, '', 'supervisor_account_error', $e); }
+                catch (Throwable) { error_log(json_encode(['account' => $key, 'category' => 'state_unwritable', 'class' => get_class($e)])); }
+            }
         }
+        // A fresh timestamp proves a completed scan, not just entry into the loop.
+        if ($running && !json_write_atomic($panel . '/supervisor.health.json', ['pid' => getmypid(), 'time' => time(),
+            'scan_completed' => true, 'accounts_checked' => count($accounts)])) throw new RuntimeException('Supervisor health write failed');
     } catch (Throwable $e) {
         error_log('Supervisor: ' . redact_secrets($e->getMessage()));
     }
     sleep(2);
 }
-foreach (load_accounts() as $key => $account) { terminate_worker($key); terminate_worker($key, 'qr'); }
+foreach (load_accounts() as $key => $account) {
+    try {
+        if (worker_running($key)) {
+            lifecycle_write($key, '', static fn(array $s): array => array_merge($s, ['state' => 'queued',
+                'stage' => 'supervisor_shutdown', 'run_id' => bin2hex(random_bytes(16)), 'heartbeat' => 0, 'attempts' => 0, 'retry_at' => 0]));
+        }
+        terminate_worker($key); terminate_worker($key, 'qr');
+    }
+    catch (Throwable $e) { error_log(json_encode(['account' => $key, 'category' => 'shutdown_failure', 'class' => get_class($e)])); }
+}

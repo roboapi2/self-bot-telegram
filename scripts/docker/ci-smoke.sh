@@ -28,6 +28,8 @@ diagnostics() {
 }
 dc() {
     local limit=15
+    local files=(-f compose.production.yml)
+    [[ -z ${COMPOSE_TEST_OVERRIDE:-} ]] || files+=(-f "$COMPOSE_TEST_OVERRIDE")
     case "$1" in
         up) limit=100 ;;
         run) limit=30 ;;
@@ -37,7 +39,7 @@ dc() {
     esac
     # Diagnostics get an independent, shorter budget after the main operation times out.
     [[ ${IN_CLEANUP:-0} == 0 || "$1" != run ]] || limit=8
-    ci_run "$limit" "Compose $1" docker compose -p "$PROJECT" -f compose.production.yml "$@"
+    ci_run "$limit" "Compose $1" docker compose -p "$PROJECT" "${files[@]}" "$@"
 }
 cleanup() {
     local status=$?
@@ -65,6 +67,18 @@ for mode in legacy fixed; do
 done
 mkdir -p "$ROOT/data/"{accounts,panel,caddy,caddy-config} "$ROOT/data/panel/"{sessions,throttle} "$ROOT/secrets" "$ROOT/docker"
 cp docker/Caddyfile "$ROOT/docker/Caddyfile"
+COMPOSE_TEST_OVERRIDE="$ROOT/lifecycle-compose.json"
+export COMPOSE_TEST_OVERRIDE
+"${TEST_PYTHON:-python3}" - "$PWD" "$COMPOSE_TEST_OVERRIDE" <<'PY'
+import json,sys
+from pathlib import Path
+root=Path(sys.argv[1])
+mount=lambda source,target: {'type':'bind','source':str(root/source),'target':target,'read_only':True,'bind':{'create_host_path':False}}
+Path(sys.argv[2]).write_text(json.dumps({'services':{
+    'supervisor':{'volumes':[mount('tests/fixtures/bot_worker.php','/opt/app/bot_template.php')]},
+    'web':{'volumes':[mount('tests/compose_lifecycle.php','/opt/test/compose_lifecycle.php')]}
+}}))
+PY
 printf '<?php return ["api_id"=>1,"api_hash"=>"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","admin_password"=>"CI_FIXTURE_ONLY_PASSWORD"];\n' > "$ROOT/secrets/config.php"
 printf '# no secrets\n' > "$ROOT/secrets/app.env"
 sudo chown -R 10001:10001 "$ROOT/data"
@@ -88,6 +102,11 @@ NGINX_ID=$(dc ps --quiet nginx)
 dc exec -T nginx sh -ec 'for path in /tmp/client /tmp/fastcgi /tmp/proxy /tmp/uwsgi /tmp/scgi; do test -d "$path" && test -w "$path"; done; test ! -w /etc/nginx/nginx.conf'
 dc exec -T web php /opt/app/docker/health.php web
 dc exec -T supervisor php /opt/app/docker/health.php supervisor
+ci_progress 'real-process authenticated API lifecycle with synthetic Telegram layer'
+ci_run 100 'multi-account Compose lifecycle' docker compose -p "$PROJECT" -f compose.production.yml -f "$COMPOSE_TEST_OVERRIDE" exec -T web php /opt/test/compose_lifecycle.php exercise
+dc kill -s KILL supervisor
+dc up -d --wait --wait-timeout 90 supervisor
+ci_run 40 'supervisor crash recovery' docker compose -p "$PROJECT" -f compose.production.yml -f "$COMPOSE_TEST_OVERRIDE" exec -T web php /opt/test/compose_lifecycle.php verify_supervisor
 dc exec -T web php -r 'require "/opt/app/lib.php"; $h=read_json_file("/opt/app/.panel/supervisor.health.json"); exit(is_file("/proc/".$h["pid"]."/cmdline") ? 0 : 1);'
 for route in config.php accounts.json .panel/accounts.json vendor/autoload.php docker/config.php; do
     ci_progress "privacy check /$route"
@@ -111,6 +130,7 @@ dc exec -T web php /opt/app/docker/health.php supervisor
 ci_progress 'verify persistence across full container recreation'
 dc stop --timeout 10
 dc up -d --force-recreate --wait --wait-timeout 90 nginx
+ci_run 40 'lifecycle intent and storage after recreation' docker compose -p "$PROJECT" -f compose.production.yml -f "$COMPOSE_TEST_OVERRIDE" exec -T web php /opt/test/compose_lifecycle.php verify_recreate
 dc exec -T web php -r 'exit(file_get_contents("/opt/app/.panel/persistence-fixture")==="preserve" ? 0:1);'
 # Disable external ACME only in this isolated fixture; production config stays intact.
 ci_progress 'verify exact gateway health, proxy routes and certificate storage'

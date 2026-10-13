@@ -1,5 +1,15 @@
 # گزارش ممیزی و تغییرات پروژه
 
+## ممیزی end-to-end چرخه حساب — ۱۴ اکتبر ۲۰۲۶
+
+[گزارش کامل معماری، اشکالات تأییدشده، قرارداد filesystem، ماتریس آزمون، استقرار/rollback و checklist یکپارچه پذیرش](docs/LIFECYCLE_AUDIT_FA.md) مبنای patch فعلی است. سورس در همان repository موجود اصلاح شد؛ VPS، session/config و credential واقعی تغییر نکرده‌اند و push/deploy انجام نشده است.
+
+include ناامن UserBot، export ناقص environment IPC، running کاذب از PID، retry نامحدود و احتمال deadlock Stop زیر data.lock تأیید و اصلاح شدند. readiness بعد از validation واقعی handler، heartbeat/generation/birth identity، failure ساختاری و retry پایدار سه‌مرحله‌ای، atomic Restart، توقف handlerهای restored حساب خاموش و تشخیص امن افزوده شد. media classification و کپی streaming آرشیو نیز اصلاح شدند. dependency/lockfile، امنیت Docker، پورت/TLS و volumeها ثابت‌اند. علت دقیق queued در VPS هنوز بدون خروجی تشخیص امن معلوم نیست؛ وجود این defects سورس را نباید با اثبات علت production یکی دانست.
+
+شاهد جدید production: enabled/logged_in با PID0 و bot/QR غیرزنده، ناظر recent healthy و PHP/shell_exec قابل استفاده. این خروجی مشکل startup/supervision را محدود می‌کند، اما نه readonly و نه lock فعال را ثابت می‌کند. append لاگ پیش از shell و exceptionهای bootstrap پیش از PID اکنون failure مشخص دارند؛ heartbeat ناظر پس از scan ثبت می‌شود. regression واقعی PHP برای pre-PID failure محلی موفق است؛ فایل‌های0400 و stale PID نیز به gate واقعی Compose افزوده شدند. علت اختصاصی VPS هنوز UNVERIFIED است.
+
+محلی:50 unit،160 locked update،6 migration،7 Docker config،34 logger،31 bot contract،29 HTTP،13 frontend،152 CI regression،18 publish mock و13 diagnostics mock موفق. Composer audit advisory ندارد؛ نصب مستقل56 dependency و suite از allowlist عمومی موفق. آزمون‌های Linux و Docker جدید هنوز در Windows بدون engine قابل اجرا نیستند؛ GitHub Ubuntu gateهای واقعی process/Compose/Trivy/Gitleaks/rolling را حفظ می‌کند. Telegram واقعی و پذیرش production هنوز NOT TESTABLE هستند. برنامه هنوز fully working یا production-fixed اعلام نمی‌شود.
+
 ## اصلاح filesystem ورود QR — ۱۳ اکتبر ۲۰۲۶
 
 تشخیص گزارش‌شده fopen(/opt/app/MadelineProto.log) با سورس MadelineProto8.7.0 تأیید شد: Magic::start مسیر script_cwd را از filename بیرونی PHP می‌گیرد، نه صرفاً cwd. Settings/Logger هنگام restoration به logger پیش‌فرض برمی‌گردد و در IPC، getType به دلیل MADELINE_WORKER همیشه FILE_LOGGER است. اگر extra قبلی absolute باشد، تغییر script_cwd آن را اصلاح نمی‌کند. بنابراین callback settings سمت QR client به‌تنهایی تمام loggerهای spawned IPC و restored session را پوشش نمی‌دهد. worker واقعی از /opt/app شروع می‌شود و PrimeModule fallbackهای .prime.py/.alt_prime.py را در getcwd() کپی می‌کند؛ این ریسک در مسیر واقعی QR نیز وجود دارد. حضور failure در diagnostic همان startup/session-stage را پوشش می‌دهد، اما به‌تنهایی اثبات شکست یا موفقیت کل ورود نیست.

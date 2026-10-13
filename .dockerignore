@@ -93,6 +93,7 @@ scripts/docker/**
 !docker/php.ini
 !tests/docker_config.php
 !docs/DOCKER_AUDIT_FA.md
+!docs/LIFECYCLE_AUDIT_FA.md
 !.env.example
 !tests/smoke_diagnostics.py
 !tests/ci_pipeline.py
@@ -110,3 +111,9 @@ docker/gateway/**
 !tests/madeline_readonly.php
 !madeline_bootstrap.php
 !scripts/patch-madeline.php
+!tests/bot_contract.php
+!tests/compose_lifecycle.php
+!tests/fixtures/
+tests/fixtures/**
+!tests/fixtures/bot_worker.php
+!tests/frontend_lifecycle.js

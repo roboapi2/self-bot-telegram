@@ -240,6 +240,17 @@ function statCard(ico, n, label) {
       el('div', { class: 'l' }, label)));
 }
 
+function lifecycleLabel(s) {
+  return ({stopped:'خاموش', queued:'در صف', starting:'در حال آماده‌سازی', running:'آماده و فعال', stopping:'در حال توقف', failed:'راه‌اندازی ناموفق', retrying:'تلاش مجدد'})[s.state] || (s.running ? 'فعال' : 'خاموش');
+}
+function lifecycleFailure(s) {
+  const f = s.failure;
+  if (!f || !['failed', 'retrying'].includes(s.state)) return '';
+  if (f.category === 'log_unwritable') return 'مسیر لاگ قابل نوشتن نیست؛ مجوز پوشه حساب را بررسی و سپس دوباره شروع کنید.';
+  if (f.category === 'worker_bootstrap_failure') return 'راه‌اندازی کارگر پیش از ثبت PID شکست خورد؛ مرحله و مجوزهای حساب را در خلاصه تشخیصی بررسی کنید.';
+  const reasons = {startup_exception:'خطای راه‌اندازی؛ خلاصه تشخیصی را بررسی کنید.', spawn_failure:'اجرای PHP کارگر ممکن نشد.', session_missing:'نشست موجود نیست؛ ورود QR را بررسی کنید.', lock_contention:'نشست در اختیار پردازش دیگری است.', process_exit:'پردازش کارگر خارج شد.', worker_exit:'کارگر پیش از آماده‌سازی خارج شد.', php_fatal:'خطای PHP کارگر.', startup_timeout:'آماده‌سازی بیش از حد طول کشید.', heartbeat_timeout:'کارگر پاسخ نمی‌دهد.', supervisor_unavailable:'ناظر پاسخ نمی‌دهد.', supervisor_account_error:'پیکربندی یا داده حساب قابل بررسی نیست.', state_corrupt:'فایل وضعیت خراب است.'};
+  return (reasons[f.category] || 'خطای حساب؛ خلاصه تشخیصی را بررسی کنید.') + (s.lifecycle?.retry_at ? ' تلاش بعدی: ' + new Date(s.lifecycle.retry_at * 1000).toLocaleTimeString('fa-IR') : ' پس از رفع مشکل، شروع را دوباره بزنید.');
+}
 function accountCard(a) {
   const s = a.status;
   return el('div', { class: 'card account' },
@@ -250,8 +261,10 @@ function accountCard(a) {
         el('div', { class: 'key' }, a.key)
       ),
       el('span', { class: 'badge ' + (s.running ? 'on' : 'off'), style: 'margin-right:auto' },
-        el('span', { class: 'dot' + (s.running ? ' on' : '') }), s.running ? 'روشن' : 'خاموش')
+        el('span', { class: 'dot' + (s.running ? ' on' : '') }), lifecycleLabel(s))
     ),
+    lifecycleFailure(s) ? el('p', {class:'muted', role:'status'}, lifecycleFailure(s)) : null,
+    s.data_errors?.length ? el('p', {class:'muted', role:'status'}, 'داده حساب قابل خواندن نیست؛ پشتیبان و مجوزها را بررسی کنید. فایل موجود حفظ شده است.') : null,
     el('div', { class: 'meta' },
       el('span', {}, icon('key'), s.logged_in ? 'لاگین‌شده' : 'نیاز به لاگین'),
       s.running ? el('span', {}, icon('clock'), fmtUptime(s.uptime)) : null,
@@ -261,10 +274,11 @@ function accountCard(a) {
     el('div', { class: 'row' },
       !s.logged_in
         ? el('button', { class: 'btn primary small', onclick: () => openQr(a.key) }, icon('qr'), 'QR Login')
-        : (s.running
+        : (s.enabled || s.process_alive
           ? el('button', { class: 'btn orange small', onclick: () => act('stop', a.key) }, icon('stop'), 'توقف')
           : el('button', { class: 'btn green small', onclick: () => act('start', a.key) }, icon('play'), 'شروع')),
       s.running ? el('button', { class: 'btn ghost icon-btn small', title: 'Restart', onclick: () => act('restart', a.key) }, icon('restart')) : null,
+      s.state === 'failed' ? el('button', {class:'btn small', onclick:() => act('start', a.key)}, 'تلاش مجدد') : null,
       el('button', { class: 'btn small', onclick: () => go('account', a.key) }, icon('settings'), 'مدیریت'),
       el('button', { class: 'btn danger icon-btn small', title: 'حذف', onclick: () => removeAccount(a) }, icon('trash'))
     )
@@ -403,13 +417,13 @@ async function renderAccount(v) {
       el('div', { class: 'avatar' }, initial(a.name)),
       el('div', {},
         el('h1', { style: 'font-size:20px' }, a.name),
-        el('div', { class: 'muted', style: 'font-size:12px' }, a.key + ' · ' + (s.running ? 'روشن' : 'خاموش'))
+        el('div', { class: 'muted', style: 'font-size:12px' }, a.key + ' · ' + lifecycleLabel(s))
       )
     ),
     el('div', { class: 'row' },
       !s.logged_in ? el('button', { class: 'btn primary small', onclick: () => openQr(a.key) }, icon('qr'), 'QR Login') : null,
-      s.logged_in && !s.running ? el('button', { class: 'btn green small', onclick: () => detailAct('start') }, icon('play'), 'شروع') : null,
-      s.running ? el('button', { class: 'btn orange small', onclick: () => detailAct('stop') }, icon('stop'), 'توقف') : null,
+      s.logged_in && (!s.enabled || s.state === 'failed') ? el('button', { class: 'btn green small', onclick: () => detailAct('start') }, icon('play'), 'شروع / تلاش مجدد') : null,
+      s.enabled || s.process_alive ? el('button', { class: 'btn orange small', onclick: () => detailAct('stop') }, icon('stop'), 'توقف') : null,
       s.running ? el('button', { class: 'btn ghost small', onclick: () => detailAct('restart') }, icon('restart'), 'ری‌استارت') : null
     )
   );
@@ -447,7 +461,9 @@ function tabOverview(body, r) {
     el('div', { class: 'grid' },
       el('div', { class: 'card' },
         el('h3', {}, 'وضعیت'),
-        info('اجرا', s.running ? 'روشن (PID ' + s.pid + ')' : 'خاموش'),
+        info('اجرا', lifecycleLabel(s)),
+        info('مرحله', s.lifecycle?.stage || '—'),
+        info('خطا', lifecycleFailure(s) || '—'),
         info('لاگین', s.logged_in ? 'بله' : 'خیر'),
         info('آپ‌تایم', fmtUptime(s.uptime)),
         info('پیام‌های cache شده', String(s.cache_count || 0)),

@@ -4,6 +4,7 @@ import os
 import pathlib
 import subprocess
 import tempfile
+import sys
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--bash', default='bash')
@@ -37,6 +38,7 @@ exit 0
     sudo.chmod(0o755)
     environment = os.environ.copy()
     environment.pop('RUNNER_TEMP', None)
+    environment['TEST_PYTHON'] = sys.executable
     environment['UBCC_DIAGNOSTICS_BIN'] = binary.as_posix()
     environment['TMPDIR'] = stage.as_posix()
     result = subprocess.run([args.bash, '-c',

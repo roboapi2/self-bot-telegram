@@ -1,5 +1,13 @@
 # تاریخچه تغییرات
 
+## ۲۰۲۶/۱۰/۱۴ — چرخه حساب و readiness قابل مشاهده
+
+- تعریف UserBot از launcher جدا، کلاس restoration preload و انتقال environment والد به IPC اصلاح شد؛ dependency ثابت است.
+- readiness پس از handler validation، heartbeat و generation/process identity، failure sanitized، retry محدود و diagnose امن اضافه شد.
+- lifecycle/data locking و atomic Restart اصلاح؛ Stop، account isolation و persistent intent حفظ شدند.
+- evidence جدید PID0 بررسی شد؛ خطاهای log redirection و bootstrap پیش از PID اکنون category/stage دارند و heartbeat ناظر پس از scan تکمیل‌شده ثبت می‌شود.
+- regression واقعی Compose با worker/supervisor/API و Telegram مصنوعی، تست handler/storage/privacy و وضعیت فارسی اضافه شد؛ اجرای Docker و Telegram واقعی هنوز منتظر تأیید است.
+
 ## ۲۰۲۶/۱۰/۱۳ — سازگاری MadelineProto با filesystem فقط‌خواندنی
 
 - scratch اختصاصی0700 در tmpfs و تنظیم صریح cwd/script_cwd برای QR/bot و spawned IPC اضافه شد؛ داده session جابه‌جا نمی‌شود.

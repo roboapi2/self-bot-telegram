@@ -176,3 +176,8 @@ sudo bash scripts/control.sh accounts
 ```
 
 این فرمان‌ها را با نتایج قبل reboot و ردیف‌های چک‌لیست مقایسه کنید. عبور همه بررسی‌های سرور و چک‌لیست Telegram شرط اعلام آمادگی تولید است.
+# تشخیص چرخه حساب
+
+در نسخه دارای lifecycle state، پاسخ «درخواست ثبت شد» به معنی running نیست. پنل باید پس از starting به «آماده و فعال» برسد؛ failure و تلاش بعدی را در کارت حساب بررسی کنید. پس از سه خطای startup، رفع علت و Start صریح لازم است. Stop قصد اجرا را پاک می‌کند و restart سرویس نباید حساب خاموش را دوباره فعال کند.
+
+برای گزارش امن و فقط‌خواندنی، روی نصب Docker نسخه جدید `sudo bash /opt/ubcc/scripts/docker/control.sh diagnose` اجرا کنید. session، config، raw logs و docker inspect کامل را ارسال نکنید. [ممیزی چرخه و checklist پذیرش](LIFECYCLE_AUDIT_FA.md) را قبل از استقرار این patch بخوانید؛ تأیید Telegram واقعی همچنان لازم است.

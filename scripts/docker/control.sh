@@ -8,6 +8,7 @@ case "${1:-status}" in
     status) dc ps ;;
     logs) dc logs --tail 100 "${2:-supervisor}" ;;
     doctor) dc exec -T supervisor php /opt/app/console.php doctor ;;
+    diagnose) dc ps; dc exec -T supervisor php /opt/app/console.php diagnose ;;
     rollback)
         [[ -f "$ROOT/state/previous.env" ]] || { echo 'نسخه قبلی ثبت نشده است.' >&2; exit 1; }
         unset UBCC_GATEWAY_IMAGE
@@ -18,5 +19,5 @@ case "${1:-status}" in
         lock; RUNNING=$(dc ps --status running -q); dc stop
         trap 'if [[ -n "$RUNNING" ]]; then dc up -d --wait --wait-timeout 240; fi' EXIT
         snapshot ;;
-    *) echo 'فرمان‌ها: start stop restart status logs doctor rollback backup' >&2; exit 1 ;;
+    *) echo 'فرمان‌ها: start stop restart status logs doctor diagnose rollback backup' >&2; exit 1 ;;
 esac

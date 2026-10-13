@@ -15,7 +15,12 @@ $patches = [
         [
             "        \$runner = self::getScriptPath();" => "        if (\\defined('UBCC_MADELINE_BOOTSTRAP')) \$options['auto_prepend_file'] = UBCC_MADELINE_BOOTSTRAP;\n\n        \$runner = self::getScriptPath();",
             "'cwd' => Magic::getcwd()," => "'cwd' => \\defined('UBCC_MADELINE_BOOTSTRAP') ? null : Magic::getcwd(),",
+            "array_filter(\$_SERVER, static fn (\$v, \$k): bool =>" => "array_filter(array_merge(\$_SERVER, getenv()), static fn (\$v, \$k): bool =>",
         ],
+    ],
+    'src/EventHandler.php' => [
+        '6fce62b2f1d29da258f0786a988b035e5242a121b3decaf251b488820163d2a2',
+        ["            \$this->startedInternal = true;" => "            \$this->startedInternal = true;\n            if (static::class === 'UserBot' && \\function_exists('ubcc_event_handler_ready')) \\ubcc_event_handler_ready();"],
     ],
 ];
 foreach ($patches as $relative => [$hash, $changes]) {

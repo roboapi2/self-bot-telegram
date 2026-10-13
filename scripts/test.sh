@@ -10,6 +10,7 @@ for file in ./*.sh scripts/*.sh scripts/docker/*.sh docker/*.sh; do bash -n "$fi
 "${TEST_PHP:-php}" tests/migration.php
 "${TEST_PHP:-php}" tests/docker_config.php
 "${TEST_PHP:-php}" tests/madeline_logger.php
+"${TEST_PHP:-php}" tests/bot_contract.php
 "${TEST_PHP:-php}" tests/linux_lifecycle.php
 "${TEST_PYTHON:-python3}" tests/security_http.py
 echo 'Source and HTTP security tests passed.'

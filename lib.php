@@ -261,7 +261,9 @@ function account_status(array $acc): array
     $key   = (string) $acc['key'];
     $paths = account_paths($key);
     $pid   = read_pid($key);
-    $running = worker_running($key);
+    $lifecycle = lifecycle_status($key);
+    $pid = $lifecycle['process_alive'] ? (int) ($lifecycle['pid'] ?? $pid) : null;
+    $running = $lifecycle['running'];
 
     $startedAt = null;
     $uptime = null;
@@ -271,48 +273,82 @@ function account_status(array $acc): array
             $uptime = time() - $startedAt;
         }
     }
+    // A damaged private JSON file must not take down the entire account list.
+    // Preserve its contents and report the affected field instead of resetting it.
+    $dataErrors = [];
+    try { $loggedIn = is_logged_in($key); }
+    catch (Throwable) { $loggedIn = false; $dataErrors[] = 'qr_state'; }
+    $counts = [];
+    foreach (['cache_count' => 'cache', 'campaign_count' => 'auto_campaigns'] as $field => $path) {
+        try { $counts[$field] = count((array) read_json_file($paths[$path], [])); }
+        catch (Throwable) { $counts[$field] = null; $dataErrors[] = $path; }
+    }
 
     return [
+        'lifecycle'      => $lifecycle,
+        'state'          => $lifecycle['state'],
+        'enabled'        => $lifecycle['enabled'],
+        'process_alive'  => $lifecycle['process_alive'],
+        'failure'        => $lifecycle['failure'] ?? null,
         'running'        => $running,
         'pid'            => $pid,
-        'logged_in'      => is_logged_in($key),
+        'logged_in'      => $loggedIn,
+        'data_errors'    => $dataErrors,
         'started_at'     => $startedAt,
         'uptime'         => $uptime,
-        'cache_count'    => is_file($paths['cache']) ? count((array) read_json_file($paths['cache'], [])) : 0,
-        'campaign_count' => is_file($paths['auto_campaigns']) ? count((array) read_json_file($paths['auto_campaigns'], [])) : 0,
+        'cache_count'    => $counts['cache_count'],
+        'campaign_count' => $counts['campaign_count'],
     ];
 }
 
-function start_account(string $key): array
+function start_account(string $key, bool $alreadyLocked = false): array
 {
-    return with_file_lock(account_dir($key) . '/lifecycle.lock', static function () use ($key): array {
+    $operation = static function () use ($key): array {
         $accounts = load_accounts();
         if (!isset($accounts[$key])) return ['ok' => false, 'error' => 'اکانت پیدا نشد.'];
         ensure_account_files($key);
         if (!is_logged_in($key)) return ['ok' => false, 'error' => 'ابتدا ورود QR را کامل کنید.'];
         if (worker_running($key, 'qr')) return ['ok' => false, 'error' => 'ورود QR هنوز در حال اجراست؛ کمی صبر کنید.'];
         $p = account_paths($key);
+        if ((int) cfg()['api_id'] <= 0 || !preg_match('/^[a-f0-9]{32}$/i', (string) cfg()['api_hash'])) return ['ok' => false, 'error' => 'تنظیمات API نامعتبر است.'];
+        if (worker_running($key)) {
+            if (!is_file($p['dir'] . '/enabled')) return ['ok' => false, 'error' => 'توقف قبلی هنوز کامل نشده است؛ پس از خروج پردازش دوباره تلاش کنید.'];
+            return ['ok' => true, 'accepted' => true, 'message' => 'پردازش در حال اجرا یا آماده‌سازی است.', 'status' => account_status($accounts[$key])];
+        }
+        if (cfg()['process_mode'] === 'supervisor') {
+            $h = read_json_file(base_dir() . '/.panel/supervisor.health.json', []);
+            if (time() - (int) ($h['time'] ?? 0) > 30) return ['ok' => false, 'error' => 'ناظر پاسخ نمی‌دهد؛ وضعیت سرویس supervisor را بررسی کنید.'];
+        }
+        lifecycle_write($key, '', static fn(array $s): array => array_merge($s, ['state' => 'queued', 'stage' => 'request',
+            'attempts' => 0, 'requested_at' => time(), 'failure' => null, 'retry_at' => 0, 'heartbeat' => 0]));
         if (!json_write_atomic($p['dir'] . '/enabled', true)) throw new RuntimeException('ذخیره وضعیت اجرا ممکن نشد.');
-        if (worker_running($key)) return ['ok' => true, 'message' => 'اکانت روشن است.', 'status' => account_status($accounts[$key])];
-        if (cfg()['process_mode'] === 'supervisor') return ['ok' => true, 'message' => 'در صف اجرا؛ وضعیت چند ثانیه دیگر به‌روز می‌شود.'];
+        if (cfg()['process_mode'] === 'supervisor') return ['ok' => true, 'accepted' => true, 'state' => 'queued', 'message' => 'درخواست ثبت شد؛ تا تأیید آماده‌بودن، حساب روشن نیست.'];
         return launch_worker($key, 'bot');
-    });
+    };
+    return $alreadyLocked ? $operation() : with_file_lock(account_dir($key) . '/lifecycle.lock', $operation);
 }
 
-function stop_account(string $key): array
+function stop_account(string $key, bool $alreadyLocked = false): array
 {
-    return with_file_lock(account_dir($key) . '/lifecycle.lock', static function () use ($key): array {
+    $operation = static function () use ($key): array {
         $p = account_paths($key);
-        @unlink($p['dir'] . '/enabled');
-        return terminate_worker($key) ? ['ok' => true, 'message' => 'خاموش شد.']
+        if (is_file($p['dir'] . '/enabled') && !unlink($p['dir'] . '/enabled')) throw new RuntimeException('Stop intent could not be saved');
+        if (is_file($p['dir'] . '/qr.requested')) unlink($p['dir'] . '/qr.requested');
+        lifecycle_write($key, '', static fn(array $s): array => array_merge($s, ['state' => 'stopping', 'run_id' => bin2hex(random_bytes(16)), 'heartbeat' => 0]));
+        $stopped = terminate_worker($key);
+        if ($stopped) lifecycle_write($key, '', static fn(array $s): array => array_merge($s, ['state' => 'stopped', 'pid' => 0]));
+        return $stopped ? ['ok' => true, 'message' => 'خاموش شد.']
             : ['ok' => false, 'error' => 'توقف هنوز کامل نشده است؛ لاگ را بررسی کنید.'];
-    });
+    };
+    return $alreadyLocked ? $operation() : with_file_lock(account_dir($key) . '/lifecycle.lock', $operation);
 }
 
 function restart_account(string $key): array
 {
-    $result = stop_account($key);
-    return $result['ok'] ? start_account($key) : $result;
+    return with_file_lock(account_dir($key) . '/lifecycle.lock', static function () use ($key): array {
+        $result = stop_account($key, true);
+        return $result['ok'] ? start_account($key, true) : $result;
+    });
 }
 
 /** Restart every currently-running account — used to roll out a code update. */
@@ -321,6 +357,7 @@ function restart_running_accounts(): array
     $restarted = [];
     $failed = [];
     foreach (load_accounts() as $key => $acc) {
+        try {
         if (!account_status($acc)['running']) {
             continue;
         }
@@ -330,6 +367,7 @@ function restart_running_accounts(): array
         } else {
             $failed[$key] = $r['error'] ?? 'error';
         }
+        } catch (Throwable) { $failed[$key] = 'ری‌استارت حساب کامل نشد؛ خلاصه تشخیصی را بررسی کنید.'; }
     }
     return ['restarted' => $restarted, 'failed' => $failed];
 }
@@ -341,7 +379,9 @@ function start_all_accounts(): array
     $skipped = [];
     $failed = [];
     foreach (load_accounts() as $key => $acc) {
+        try {
         $st = account_status($acc);
+        if (in_array('qr_state', $st['data_errors'], true)) { $failed[$key] = 'داده ورود حساب قابل خواندن نیست؛ فایل حفظ شد.'; continue; }
         if ($st['running']) {
             continue;
         }
@@ -355,6 +395,7 @@ function start_all_accounts(): array
         } else {
             $failed[$key] = $r['error'] ?? 'error';
         }
+        } catch (Throwable) { $failed[$key] = 'شروع حساب کامل نشد؛ خلاصه تشخیصی را بررسی کنید.'; }
     }
     return ['started' => $started, 'skipped' => $skipped, 'failed' => $failed];
 }

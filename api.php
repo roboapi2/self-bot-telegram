@@ -47,11 +47,13 @@ try {
         $keyForLock = $action === 'create_account' ? '' : (string) ($_GET['key'] ?? $_POST['key'] ?? '');
         if ($keyForLock !== '' && (!valid_account_key($keyForLock) || !isset(load_accounts()[$keyForLock]))) json_out(['ok' => false, 'error' => 'اکانت نامعتبر است.'], 400);
         if ($keyForLock !== '' && valid_account_key($keyForLock) && isset(load_accounts()[$keyForLock])) ensure_account_files($keyForLock);
-        $lockFile = $keyForLock !== '' && valid_account_key($keyForLock) ? account_dir($keyForLock) . '/data.lock' : dirname(accounts_file()) . '/accounts.lock';
-        $requestLock = fopen($lockFile, 'c');
-        if (!$requestLock || !flock($requestLock, LOCK_EX)) throw new RuntimeException('قفل داده ممکن نشد.');
-        // Account registry must also be locked for mutations on existing accounts.
+        // Registry before data: a consistent order for rename/remove/create.
         if (in_array($action, ['rename_account', 'remove'], true)) { $registryLock = fopen(dirname(accounts_file()) . '/accounts.lock', 'c'); if (!$registryLock || !flock($registryLock, LOCK_EX)) throw new RuntimeException('قفل فهرست ممکن نشد.'); }
+        $lockFile = $keyForLock !== '' && valid_account_key($keyForLock) ? account_dir($keyForLock) . '/data.lock' : dirname(accounts_file()) . '/accounts.lock';
+        if (!in_array($action, ['start', 'stop', 'restart', 'start_all', 'stop_all', 'restart_all', 'qr_start', 'remove'], true)) {
+            $requestLock = fopen($lockFile, 'c');
+            if (!$requestLock || !flock($requestLock, LOCK_EX)) throw new RuntimeException('قفل داده ممکن نشد.');
+        }
     }
     switch ($action) {
 
@@ -116,8 +118,8 @@ try {
             $n = count($res['restarted']);
             $f = count($res['failed']);
             json_out([
-                'ok'      => true,
-                'message' => $n . ' اکانت ری‌استارت شد' . ($f ? "، {$f} ناموفق" : '') . '.',
+                'ok'      => empty($res['failed']),
+                'message' => $n . ' درخواست ری‌استارت ثبت شد' . ($f ? "، {$f} ناموفق" : '') . '.',
                 'result'  => $res,
             ]);
         }
@@ -128,8 +130,8 @@ try {
             $sk = count($res['skipped']);
             $f = count($res['failed']);
             json_out([
-                'ok'      => true,
-                'message' => $n . ' اکانت روشن شد'
+                'ok'      => empty($res['failed']),
+                'message' => $n . ' درخواست شروع ثبت شد؛ آماده‌بودن را در وضعیت حساب بررسی کنید'
                     . ($sk ? "، {$sk} بدون لاگین رد شد" : '')
                     . ($f ? "، {$f} ناموفق" : '') . '.',
                 'result'  => $res,
@@ -139,7 +141,7 @@ try {
         case 'stop_all': {
             $res = stop_all_accounts();
             json_out([
-                'ok'      => true,
+                'ok'      => empty($res['failed']),
                 'message' => count($res['stopped']) . ' اکانت خاموش شد.',
                 'result'  => $res,
             ]);
@@ -147,8 +149,11 @@ try {
 
         case 'remove': {
             [$key, $acc, $accounts] = req_account();
-            stop_account($key);
+            $stop = stop_account($key);
+            if (!$stop['ok']) json_out($stop, 409);
             stop_qr_worker($key);
+            $requestLock = fopen(account_dir($key) . '/data.lock', 'c');
+            if (!$requestLock || !flock($requestLock, LOCK_EX)) throw new RuntimeException('قفل داده ممکن نشد.');
             unset($accounts[$key]);
             save_accounts($accounts);
 
