@@ -1,5 +1,19 @@
 # گزارش ممیزی و تغییرات پروژه
 
+## اصلاح logger ورود QR — ۱۳ اکتبر ۲۰۲۶
+
+سورس نصب‌شده MadelineProto8.7.0 بررسی شد: Settings/Logger::setExtra رشته callable را قبول می‌کند، اما Logger.php:421 آن را بدون تبدیل به Revolt/EventLoop::queue می‌دهد؛ queue فقط Closure می‌پذیرد. patch در runtime.php از `Closure::fromCallable('ubcc_madeline_log')` استفاده می‌کند. dependency، session یا تنظیمات Docker/شبکه/TLS تغییر نکردند.
+
+Settings/Logger::__sleep عمداً extra از نوع Closure را serialize نمی‌کند؛ پس native serialization به خطای «Serialization of Closure» نمی‌رسد. __wakeup logger پیش‌فرض را بازمی‌گرداند؛ make_api و مسیر bot هر بار settings تازه را configure می‌کنند و API constructor همان settings را هنگام اتصال/restoration برای updateSettings ارسال می‌کند. regression با کلاس‌های واقعی vendor، serialize/unserialize logger و Settings کامل و merge settings تازه، از جمله settings قدیمی با string callback، این رفتار را بررسی می‌کند. این آزمون session واقعی و اتصال Telegram ایجاد نمی‌کند؛ تنها bootstrap hookهای سراسری Magic در process تست ایزوله می‌شوند.
+
+MadelineProto8.7.0 مقدار ERROR را به NOTICE clamp می‌کند؛ callback شرط error-only را نیز اجرا می‌کند. known config secrets، مقادیر quoted چندکلمه‌ای، Authorization/Bearer، auth_key، access/refresh/session tokens، QR token و session_secret/session_string در stringها redact می‌شوند؛ object/array/Throwable بدون محتوای آن‌ها به پیام عمومی تبدیل می‌شوند. تست‌ها هیچ secret واقعی ندارند و فقط fixture را بررسی می‌کنند. redaction محافظه‌کارانه ممکن است متن پس از فیلد حساس را نیز حذف کند؛ رشته ناشناس بدون نام فیلد را نمی‌توان با اطمینان به عنوان secret تشخیص داد، بنابراین نباید session یا secret خام به logger ارسال شود.
+
+tests/madeline_logger.php در scripts/test.sh و allowlistهای Docker/release ثبت شد تا همان regression در CI Linux نیز اجرا شود. آزمون محلی: PHP/shell lint،35 unit،160 locked updates،6 migration،7 Docker config،29 logger،27 HTTP موفق.281 قرارداد offline،127 regression CI،18 publish mock،13 diagnostics mock و ignore/privacy در هر دو mode موفق؛ Composer audit advisory گزارش نکرد. lifecycle Linux محلی به علت Windows/نبود pcntl/posix skip شد. Docker و ورود QR واقعی در این محیط بدون engine اجرا نشدند؛ قبولی GitHub Actions و آزمون کاربر روی QR شرط تأیید end-to-end باقی است. داده/نشست/config موجود دست‌نخورده‌اند و هیچ VPS خوانده یا تغییر داده نشده است.
+
+clean-install از allowlist عمومی در temp، نصب56 dependency از lockfile، platform requirements و کل suite نیز موفق شد. تلاش اول به علت 7z ابزار AOMEI در PATH محلی و symlinkهای مستندات vendor شکست خورد؛ retry با 7-Zip اصلی فقط در PATH همان process موفق بود؛ سورس یا dependency version تغییر نکرد. تست ignore44 مسیر خصوصی و95 سورس واجد شرایط را بررسی و بسته fixture87 فایل را تأیید کرد. patch فقط هفت فایل public را تغییر داده و staged است؛ push/deploy انجام نشده است.
+
+بخش‌های بعد گزارش تاریخی اولیه‌اند؛ workspace فعلی Git repository است.
+
 تاریخ بررسی: ۱۰ اکتبر ۲۰۲۶. محل کار: `F:\project\self`، همان پوشه سورس استخراج‌شده موجود. هیچ آرشیو سورس دریافت یا باز نشده و پروژه جایگزین ساخته نشده است.
 
 ## شناسایی ساختار و جریان اجرا

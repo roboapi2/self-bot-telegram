@@ -1,5 +1,11 @@
 # تاریخچه تغییرات
 
+## ۲۰۲۶/۱۰/۱۳ — اصلاح callback logger ورود QR
+
+- callback logger به Closure تبدیل شد تا با Revolt queue سازگار باشد؛ نسخه dependency و داده session تغییر نکردند.
+- error-only در callback enforce و redaction مقادیر quoted، authorization و session/token تقویت شد؛ objectها و exceptionها محتوای خصوصی چاپ نمی‌کنند.
+- regression با vendor واقعی، TypeError قبلی، queue، serialization/restoration/merge settings و privacy بدون اتصال Telegram به test suite اضافه شد.
+
 ## ۲۰۲۶/۱۰/۱۱ — gateway patched و opt-in استقرار
 
 - Caddy پایدار2.11.7 با Go1.26.9 و x/net0.60.0 از source و dependencyهای pin‌شده بازسازی می‌شود؛ base imageها و آرشیو source با digest/checksum ثابت‌اند.

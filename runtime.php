@@ -135,11 +135,16 @@ function redact_secrets(string $text): string
         $secret = (string) (cfg()[$field] ?? '');
         if ($secret !== '') $text = str_replace($secret, '[REDACTED]', $text);
     }
-    return preg_replace('/(password|api_hash|auth_key|token)([\s\"\x27:=]+)[^\s,}\r\n]+/i', '$1$2[REDACTED]', $text) ?? '';
+    // Consume entire quoted values (including spaces), not just their first word.
+    $text = preg_replace('/\b(password|api_hash|auth_key|authorization|(?:access_|refresh_|session_|bot_)?token|session_secret|session_string|secret)(["\x27]?\s*[:=]\s*|\s+)(?:"(?:\\\\.|[^"\\\\])*"|\x27(?:\\\\.|[^\x27\\\\])*\x27|[^\r\n,}]+)/i', '$1$2[REDACTED]', $text) ?? '';
+    $text = preg_replace('/\bBearer\s+[^\s,}\r\n]+/i', 'Bearer [REDACTED]', $text) ?? '';
+    return preg_replace('~tg://login\?token=[^\s"\x27<>]+~i', 'tg://login?token=[REDACTED]', $text) ?? '';
 }
 
 function ubcc_madeline_log(mixed $message, int $level = 0): void
 {
+    // MadelineProto 8.7 clamps setLevel(ERROR) to NOTICE; enforce it here too.
+    if ($level > \danog\MadelineProto\Logger::ERROR) return;
     // Structured protocol objects may contain authorization material.
     error_log(is_string($message) ? redact_secrets($message) : 'MadelineProto protocol error');
 }
@@ -147,5 +152,6 @@ function ubcc_madeline_log(mixed $message, int $level = 0): void
 function configure_madeline_logger(\danog\MadelineProto\Settings $settings): void
 {
     $settings->getLogger()->setType(\danog\MadelineProto\Logger::CALLABLE_LOGGER)
-        ->setExtra('ubcc_madeline_log')->setLevel(\danog\MadelineProto\Logger::ERROR);
+        // Logger settings omit closures on serialization; startup reapplies this.
+        ->setExtra(Closure::fromCallable('ubcc_madeline_log'))->setLevel(\danog\MadelineProto\Logger::ERROR);
 }

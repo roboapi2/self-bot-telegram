@@ -106,3 +106,4 @@ docker/gateway/**
 !docker/gateway/source.sha256
 !docker/gateway/main.go
 !tests/gateway_publish.py
+!tests/madeline_logger.php
