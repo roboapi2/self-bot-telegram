@@ -155,3 +155,29 @@ function configure_madeline_logger(\danog\MadelineProto\Settings $settings): voi
         // Logger settings omit closures on serialization; startup reapplies this.
         ->setExtra(Closure::fromCallable('ubcc_madeline_log'))->setLevel(\danog\MadelineProto\Logger::ERROR);
 }
+
+/** Private per-process scratch space; sessions always keep their absolute account path. */
+function initialize_madeline_runtime(): void
+{
+    static $directory = null;
+    if ($directory === null) {
+        $directory = rtrim(sys_get_temp_dir(), '/\\') . '/ubcc-madeline-' . bin2hex(random_bytes(16));
+        if (!mkdir($directory, 0700)) throw new RuntimeException('Cannot create private MadelineProto scratch directory');
+        register_shutdown_function(static function () use ($directory): void {
+            // Only known scratch files; never recurse into sessions or arbitrary paths.
+            try {
+                foreach (['.prime.py', '.alt_prime.py', 'MadelineProto.log'] as $name) {
+                    $file = $directory . '/' . $name;
+                    if (is_file($file) || is_link($file)) unlink($file);
+                }
+                if (is_dir($directory) && count(scandir($directory)) === 2) rmdir($directory);
+            } catch (Throwable) { /* Scratch cleanup must not interrupt session shutdown. */ }
+        });
+    }
+    if (!chdir($directory)) throw new RuntimeException('Cannot enter MadelineProto scratch directory');
+    \danog\MadelineProto\Magic::start(light: true);
+    // Magic derives this from the outer script filename, not chdir().
+    \danog\MadelineProto\Magic::$script_cwd = $directory;
+    \danog\MadelineProto\Magic::$cwd = $directory;
+    if (!defined('UBCC_MADELINE_BOOTSTRAP')) define('UBCC_MADELINE_BOOTSTRAP', __DIR__ . '/madeline_bootstrap.php');
+}

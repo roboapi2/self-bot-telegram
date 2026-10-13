@@ -107,3 +107,6 @@ docker/gateway/**
 !docker/gateway/main.go
 !tests/gateway_publish.py
 !tests/madeline_logger.php
+!tests/madeline_readonly.php
+!madeline_bootstrap.php
+!scripts/patch-madeline.php

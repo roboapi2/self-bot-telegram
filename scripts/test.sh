@@ -2,6 +2,7 @@
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 unset UBCC_PROCESS_MODE UBCC_PHP_BIN UBCC_ADMIN_PASSWORD UBCC_API_ID UBCC_API_HASH
+"${TEST_PHP:-php}" scripts/patch-madeline.php
 for file in ./*.php tests/*.php scripts/*.php docker/*.php; do "${TEST_PHP:-php}" -l "$file"; done
 for file in ./*.sh scripts/*.sh scripts/docker/*.sh docker/*.sh; do bash -n "$file"; done
 "${TEST_PHP:-php}" tests/unit.php

@@ -17,6 +17,7 @@ function make_api(string $key): API
     $cfg   = cfg();
     $paths = account_paths($key);
 
+    initialize_madeline_runtime();
     $settings = new Settings;
     $appInfo  = new AppInfo;
     $appInfo->setApiId((int) $cfg['api_id']);

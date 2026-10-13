@@ -8,8 +8,9 @@ COPY --from=composer /usr/bin/composer /usr/local/bin/composer
 FROM php-base AS dependencies
 WORKDIR /build
 COPY composer.json composer.lock ./
+COPY scripts/patch-madeline.php ./scripts/patch-madeline.php
 RUN composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-scripts --no-plugins \
-    && composer check-platform-reqs --no-dev
+    && composer check-platform-reqs --no-dev && php scripts/patch-madeline.php
 FROM dependencies AS source
 COPY . /build
 FROM php-base AS runtime
@@ -19,6 +20,7 @@ LABEL org.opencontainers.image.source="https://github.com/roboapi2/self-bot-tele
 RUN groupadd -g 10001 ubcc && useradd -u 10001 -g ubcc -s /usr/sbin/nologin -d /opt/app ubcc
 WORKDIR /opt/app
 COPY --from=source /build/index.php /build/api.php /build/lib.php /build/runtime.php /build/worker.php /build/supervisor.php /build/console.php /build/bot_template.php /build/qr_worker.php /build/madeline_tools.php ./
+COPY --from=source /build/madeline_bootstrap.php ./
 COPY --from=dependencies /build/vendor ./vendor
 COPY --from=source /build/docker/entrypoint.sh /build/docker/health.php ./docker/
 COPY --from=source /build/assets ./public/assets

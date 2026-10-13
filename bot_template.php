@@ -2583,6 +2583,7 @@ if ($apiId <= 0 || $apiHash === '') {
     exit(1);
 }
 
+initialize_madeline_runtime();
 $settings = new Settings;
 
 $appInfo = new AppInfo;

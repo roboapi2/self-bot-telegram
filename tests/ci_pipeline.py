@@ -120,6 +120,19 @@ check('auto_https off' not in (root / 'docker/Caddyfile').read_text() and
       'bind 127.0.0.1' in (root / 'docker/Caddyfile').read_text(),
       'Production HTTPS disabled or health endpoint exposed')
 
+patch = (root / 'scripts/patch-madeline.php').read_text()
+check("hash('sha256', $original) !== $hash" in patch, 'Vendor compatibility patch must fail closed on source changes')
+check('php scripts/patch-madeline.php' in (root / 'Dockerfile').read_text(), 'Runtime dependency patch missing from build')
+check('auto_prepend_file' in patch and "? null : Magic::getcwd()" in patch, 'IPC bootstrap/private cwd protection missing')
+check('Magic::$isIpcWorker = true' in (root / 'madeline_bootstrap.php').read_text(),
+      'Early bootstrap lost IPC worker identity')
+check('Closure::fromCallable' in patch and 'ubcc_madeline_log' in patch, 'Restored logger bypasses redaction callback')
+readonly_test = (root / 'tests/madeline_readonly.php').read_text()
+for required in ['new \\danog\\MadelineProto\\API', 'python_single_alt', 'getQRSvg', 'unserialize(serialize']:
+    check(required in readonly_test, 'Readonly regression stage missing: ' + required)
+check('--network none --user 10001:10001 --read-only --cap-drop ALL --security-opt no-new-privileges' in smoke,
+      'Readonly regression must use runtime isolation without Telegram network')
+
 # Execute the real entrypoint with a fake Nginx: the old command must hang until
 # GNU timeout interrupts it; the direct executable must return immediately.
 with tempfile.TemporaryDirectory(prefix='ubcc-ci-regression-') as temporary:

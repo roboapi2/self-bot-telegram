@@ -1,5 +1,11 @@
 # تاریخچه تغییرات
 
+## ۲۰۲۶/۱۰/۱۳ — سازگاری MadelineProto با filesystem فقط‌خواندنی
+
+- scratch اختصاصی0700 در tmpfs و تنظیم صریح cwd/script_cwd برای QR/bot و spawned IPC اضافه شد؛ داده session جابه‌جا نمی‌شود.
+- patch محدود و hash-checked برای MadelineProto8.7.0، constructor/restoration logger را روی Closure redacting نگه می‌دارد؛ نسخه dependency ثابت است.
+- regression runtime با non-root/read-only/network none، legacy fopen failure، prime fallback، API preflight و SVG مصنوعی QR اضافه شد. تأیید Telegram واقعی منتظر Actions و آزمون کاربر است.
+
 ## ۲۰۲۶/۱۰/۱۳ — اصلاح callback logger ورود QR
 
 - callback logger به Closure تبدیل شد تا با Revolt queue سازگار باشد؛ نسخه dependency و داده session تغییر نکردند.

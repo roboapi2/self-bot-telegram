@@ -12,7 +12,7 @@ STAGE=$(realpath -- "$1")
 [[ -f "$STAGE/composer.lock" && -f "$STAGE/tests/unit.php" && -f "$STAGE/supervisor.php" ]] || { echo 'سورس به‌روزرسانی ناقص است.' >&2; exit 1; }
 [[ -z $(find "$STAGE" -path "$STAGE/vendor" -prune -o -type l -print -quit) ]] || { echo 'پیوند نمادین در سورس به‌روزرسانی پشتیبانی نمی‌شود.' >&2; exit 1; }
 bash "$STAGE/scripts/test.sh"
-FILES=(index.php api.php lib.php runtime.php worker.php supervisor.php console.php madeline_tools.php qr_worker.php bot_template.php config.example.php composer.json composer.lock install.sh run.sh README_FA.md AUDIT_FA.md .gitignore .ignore CHANGELOG.md Dockerfile .dockerignore .gitattributes compose.production.yml)
+FILES=(index.php api.php lib.php runtime.php worker.php supervisor.php console.php madeline_tools.php madeline_bootstrap.php qr_worker.php bot_template.php config.example.php composer.json composer.lock install.sh run.sh README_FA.md AUDIT_FA.md .gitignore .ignore CHANGELOG.md Dockerfile .dockerignore .gitattributes compose.production.yml)
 for file in "${FILES[@]}"; do [[ -f "$STAGE/$file" ]] || { echo "Missing $file" >&2; exit 1; }; done
 for dir in assets scripts deploy tests docs docker .github; do [[ -d "$STAGE/$dir" ]] || { echo "Missing $dir" >&2; exit 1; }; done
 for file in scripts/common.sh scripts/migrate-storage.php docs/INSTALL_FA.md docs/OPERATIONS_FA.md docs/FINAL_AUDIT_FA.md; do

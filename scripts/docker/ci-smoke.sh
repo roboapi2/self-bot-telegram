@@ -60,6 +60,9 @@ trap cleanup EXIT
 trap 'exit 124' TERM
 trap 'exit 130' INT
 ci_progress 'prepare isolated fake storage'
+for mode in legacy fixed; do
+    ci_run 40 "MadelineProto readonly runtime regression ($mode)" docker run --rm --network none --user 10001:10001 --read-only --cap-drop ALL --security-opt no-new-privileges --tmpfs /tmp:rw,noexec,nosuid,size=256m,mode=1777 -v "$PWD/tests/madeline_readonly.php:/opt/test/madeline_readonly.php:ro" --entrypoint php "$IMAGE" /opt/test/madeline_readonly.php "$mode"
+done
 mkdir -p "$ROOT/data/"{accounts,panel,caddy,caddy-config} "$ROOT/data/panel/"{sessions,throttle} "$ROOT/secrets" "$ROOT/docker"
 cp docker/Caddyfile "$ROOT/docker/Caddyfile"
 printf '<?php return ["api_id"=>1,"api_hash"=>"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","admin_password"=>"CI_FIXTURE_ONLY_PASSWORD"];\n' > "$ROOT/secrets/config.php"

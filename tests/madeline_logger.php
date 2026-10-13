@@ -34,7 +34,11 @@ try {
         ->setExtra('ubcc_madeline_log')->setLevel(Logger::ERROR);
     $legacySerialized = serialize($settings->getLogger());
     try {
-        $original = new Logger($settings->getLogger());
+        // Reproduce the pre-patch Logger state and its real Revolt queue call.
+        $original = (new ReflectionClass(Logger::class))->newInstanceWithoutConstructor();
+        (new ReflectionProperty(Logger::class, 'mode'))->setValue($original, Logger::CALLABLE_LOGGER);
+        (new ReflectionProperty(Logger::class, 'level'))->setValue($original, Logger::ERROR);
+        (new ReflectionProperty(Logger::class, 'optional'))->setValue($original, 'ubcc_madeline_log');
         $original->logger('QR fixture failure', Logger::ERROR);
         verify_logger(false, 'original string must reproduce TypeError');
     } catch (TypeError $error) {
@@ -79,6 +83,26 @@ try {
         verify_logger(!str_contains($output, $secret), 'private fixture suppressed');
     }
     verify_logger(substr_count($output, 'MadelineProto protocol error') === 2, 'structured/throwable contents omitted');
+    $previousCwd = getcwd();
+    initialize_madeline_runtime();
+    verify_logger(getcwd() === realpath(Magic::$script_cwd) && getcwd() !== $previousCwd, 'scratch cwd and Magic path both updated');
+    if (PHP_OS_FAMILY !== 'Windows') verify_logger((fileperms(getcwd()) & 0777) === 0700, 'scratch directory private');
+    $forced = new \danog\MadelineProto\Settings\Logger;
+    $forced->setType(Logger::FILE_LOGGER)->setExtra($tmp . '/nonexistent/legacy.log');
+    $safeLogger = new Logger($forced);
+    $safeLogger->logger('restored file destination fixture', Logger::ERROR);
+    EventLoop::run();
+    verify_logger(!is_dir($tmp . '/nonexistent'), 'legacy file logger cannot write old destination');
+    chdir($previousCwd);
+    file_put_contents($tmp . '/probe.php', '<?php echo "BOOTSTRAP:".json_encode([getcwd()===realpath(\danog\MadelineProto\Magic::$script_cwd), \danog\MadelineProto\Magic::$isIpcWorker, is_writable(getcwd())])."\n";');
+    $process = proc_open([PHP_BINARY, '-d', 'auto_prepend_file=' . dirname(__DIR__) . '/madeline_bootstrap.php',
+        $tmp . '/probe.php', 'madeline-ipc'], [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+    fclose($pipes[0]);
+    $childOutput = stream_get_contents($pipes[1]); fclose($pipes[1]);
+    $childErrors = stream_get_contents($pipes[2]); fclose($pipes[2]);
+    verify_logger(proc_close($process) === 0, 'real spawned PHP bootstrap');
+    verify_logger(str_contains($childOutput, 'BOOTSTRAP:[true,true,true]'), 'IPC scratch and worker identity');
+    verify_logger(!str_contains($childErrors, 'Read-only file system'), 'IPC bootstrap no readonly error');
     echo "$checks MadelineProto logger checks passed (real vendor/Revolt; no Telegram connection)\n";
 } finally {
     ini_set('error_log', (string) $oldLog);
