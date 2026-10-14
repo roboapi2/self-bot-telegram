@@ -24,6 +24,17 @@ function fixture_http(string $base, string $path, string &$cookie, ?array $post 
     }
     return ['body' => $body, 'status' => $status, 'location' => $location];
 }
+/** A projected failed status can precede supervisor's durable failure record.
+ * Never treat the transient projection as proof that a retry was scheduled. */
+function fixture_failure_recorded(array $status): bool
+{
+    $failure = $status['failure'] ?? null;
+    return ($status['state'] ?? null) === 'failed'
+        && is_array($failure)
+        && is_string($failure['category'] ?? null)
+        && $failure['category'] !== '';
+}
+
 function fixture_token(string $body, bool $dashboard): string
 {
     $pattern = $dashboard ? '/csrf\s*:\s*"([a-f0-9]{64})"/' : '/name="csrf" value="([a-f0-9]{64})"/';

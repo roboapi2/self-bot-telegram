@@ -30,12 +30,12 @@ function status_life(string $key): array {
 }
 function await_life(string $key, string $state, int $seconds = 20): array {
     $deadline = hrtime(true) + $seconds * 1000000000;
-    do { $s = status_life($key); if ($s['state'] === $state) return $s; usleep(200000); } while (hrtime(true) < $deadline);
+    do { $s = status_life($key); if ($s['state'] === $state && ($state !== 'failed' || fixture_failure_recorded($s))) return $s; usleep(200000); } while (hrtime(true) < $deadline);
     throw new RuntimeException('Lifecycle timeout: ' . json_encode(['key' => $key, 'expected' => $state,
         'state' => $s['state'], 'enabled' => $s['enabled'], 'alive' => $s['process_alive'], 'ready' => $s['running'],
         'stage' => $s['lifecycle']['stage'] ?? null, 'attempts' => $s['lifecycle']['attempts'] ?? 0,
         'retry_at' => $s['lifecycle']['retry_at'] ?? null, 'heartbeat' => $s['lifecycle']['heartbeat'] ?? 0,
-        'category' => $s['failure']['category'] ?? null], JSON_THROW_ON_ERROR));
+        'category' => $s['failure']['category'] ?? null, 'failure_recorded' => fixture_failure_recorded($s)], JSON_THROW_ON_ERROR));
 }
 $phase = $argv[1] ?? 'exercise';
 $csrf = fixture_login('http://nginx:8080', $cookie, 'CI_FIXTURE_ONLY_PASSWORD');
@@ -79,8 +79,8 @@ json_write_atomic(account_dir('life-poll') . '/fixture-mode.json', ['mode' => 'c
 file_put_contents(account_dir('life-poll') . '/crash-once', 'fixture');
 expect_life(action_life('start', 'life-poll')['ok'], 'launch polling crash requested');
 $early = await_life('life-poll', 'failed', 8);
-expect_life($early['failure']['category'] === 'process_exit' && $early['lifecycle']['retry_at'] > time()
-    && $early['lifecycle']['ready_at'] !== null, 'launch polling death gets recoverable retry');
+expect_life(fixture_failure_recorded($early) && ($early['failure']['category'] ?? null) === 'process_exit' && ($early['lifecycle']['retry_at'] ?? 0) > time()
+    && ($early['lifecycle']['ready_at'] ?? null) !== null, 'launch polling death gets recoverable retry');
 $earlyRecovered = await_life('life-poll', 'running');
 expect_life($earlyRecovered['pid'] !== $early['lifecycle']['pid']
     && $earlyRecovered['lifecycle']['identity'] !== $early['lifecycle']['identity'], 'launch polling respawn has new process identity');

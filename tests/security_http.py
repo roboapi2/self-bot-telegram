@@ -77,6 +77,11 @@ $body = file_get_contents($base.'/', false, stream_context_create($opts));
 require_fixture(preg_match('/csrf\s*:\s*"([a-f0-9]+)"/', $body) === 0, 'old redirect defect not reproduced');
 fixture_http($base, '/api.php?action=accounts', $old, null, 401);
 echo "Old PHP redirect flow reproduced; old session is unauthenticated\n";
+// Projection of failed without durable failure metadata must not satisfy lifecycle polling.
+require_fixture(!fixture_failure_recorded(['state'=>'failed','failure'=>null]), 'transient failed state accepted');
+require_fixture(!fixture_failure_recorded(['state'=>'failed','failure'=>['category'=>'']]), 'empty failure category accepted');
+require_fixture(!fixture_failure_recorded(['state'=>'running','failure'=>['category'=>'process_exit']]), 'running state accepted as failed');
+require_fixture(fixture_failure_recorded(['state'=>'failed','failure'=>['category'=>'process_exit']]), 'durable failure not recognized');
 $cookie = ''; $csrf = fixture_login($base, $cookie, 'fixture-strong-password');
 $created = fixture_json(fixture_http($base, '/api.php?action=create_account', $cookie,
  ['key'=>'php-client','name'=>'fixture','csrf'=>$csrf])['body']);
