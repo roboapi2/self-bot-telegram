@@ -117,3 +117,4 @@ docker/gateway/**
 tests/fixtures/**
 !tests/fixtures/bot_worker.php
 !tests/frontend_lifecycle.js
+!tests/http_client.php

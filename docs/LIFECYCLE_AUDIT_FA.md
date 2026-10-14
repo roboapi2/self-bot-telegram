@@ -1,5 +1,27 @@
 # ممیزی کامل چرخه اجرا — ۱۴ اکتبر ۲۰۲۶
 
+## run38587385941 — اصلاح ورود fixture HTTP
+
+Actions برای aa378e4a88e7f0d35b19424c2c2848f554927db2 مستقیم بررسی شد: job115932883394، Linux PID ownership/locking/supervisor lifecycle، rollback mock، packaging، Gitleaks و دو scan image موفق بودند. failure فقط در آغاز Compose driver رخ داد: Undefined array key1 و create via authenticated API. save/publish/rolling skip شدند؛ موفقیت آن‌ها ادعا نمی‌شود.
+
+علت قطعی fixture با بازتولید محلی اثبات شد: lib.php::require_login session_regenerate_id(true) و302 Location می‌دهد؛ nginx SCRIPT_NAME را برای index.php و HTTPS on به FPM می‌رساند. PHP file_get_contents در client قبلی redirect را خودکار با header Cookie اولیه دنبال می‌کرد، بدون دریافت/ارسال session ID تازه. بنابراین redirect GET session منقضی را فرستاده و login page گرفته بود؛ regex CSRF داشبورد match نمی‌شد و mutation API مجاز نبود. CookieJar پایتون این اشکال را نداشت؛ به همین دلیل29 تست HTTP قبلی از این رفتار خاص PHP stream client محافظت نمی‌کردند.
+
+tests/http_client.php فقط ابزار تست است و runtime entrypoint ندارد. follow_location/max_redirects=0، timeout12s، status302 صریح، cookie renewal و allowlist مقصد redirect بررسی می‌شوند؛ dashboard با GET تازه و cookie جدید دریافت می‌شود. هیچ cookie secure/HttpOnly/SameSite/CSRF production تغییر نکرده است؛ fixture داخلی فقط Cookie را مانند قبل به‌صورت دستی روی شبکه disposable CI می‌فرستد، نه cookie jar عمومی. HTTP error صرفاً status/method چاپ می‌کند؛ JSON/token errorها body، cookie، password یا token چاپ نمی‌کنند. account status field/type قبل از دسترسی بررسی می‌شود و Stop ناموفق دیگر در driver بی‌صدا پذیرفته نمی‌شود.
+
+همان PHP client روی سرور PHP واقعی و fixture مستقل در tests/security_http.py اجرا می‌شود: flow قبلی بدون dashboard CSRF بازتولید، session قبلی401، ورود اصلاح‌شده با cookie جدید، اولین account با API واقعی، CSRF نامعتبر403، حذف fixture و logout401 تأیید شدند. malformed JSON و token missing با canary خصوصی، diagnostic بدون محتوای canary دارند.32 HTTP checks محلی PASS است. helper با readonly bind کنار Compose driver قرار می‌گیرد و در allowlist Docker/release ثبت شده؛ account داده واقعی، volumeها، dependencyها و auth production دست‌نخورده‌اند.
+
+| اعتبار این نسخه | وضعیت |
+|---|---|
+| root cause client و session/redirect regression | PASS محلی؛ old PHP flow و client مشترک جدید روی login/API واقعی |
+| Linux crash recovery/QR transition نسخه aa378e4 | PASS در Actions38587385941؛ برای patch جدید هنوز نیازمند run جدید |
+| full Compose multi-account/persistence/security patch جدید | UNVERIFIED؛ engine محلی موجود نیست، fixture جدید در gate بدون skip فعال است |
+| publication، rolling و production acceptance | UNVERIFIED؛ jobهای نسخه قبلی skip و هیچ push/deploy این patch انجام نشده |
+| real Telegram | UNVERIFIED؛ synthetic tests به معنی سلامت Telegram نیستند |
+
+محلی پس از patch:55 unit،160 concurrency،6 migration،7 Docker config،34 logger،31 bot contract،32 HTTP و13 frontend؛155 CI regression،300 قرارداد offline،18 publish mock،13 diagnostics mock و archive fixture96 فایل (44 ignored/104 eligible) موفق. Composer audit advisory ندارد. یک اجرای اولیه Windows در bot contract با native zend_mm_heap corrupted abort شد؛ rerun کامل بدون تغییر dependency/کد آزمون موفق بود. علت native abort مشخص نشده و محدودیت محلی ثبت می‌شود؛ این رخداد نباید به معنای قبولی Linux/Docker جدید تعبیر شود. صحت cookie secure و routing واقعی Nginx/FPM در gate Compose جدید همچنان نیازمند Actions است.
+
+بخش‌های پایین تاریخی‌اند؛ ماتریس بالاتر وضعیت جدید را تکمیل می‌کند. برنامه تا قبولی همه gateهای run جدید و checklist Telegram production-ready اعلام نمی‌شود.
+
 ## بازبینی مجدد درخواست جامع
 
 فایل درخواست مجدد همان scope ممیزی قبلی را دارد؛ patch و یافته‌ها ادامه همان کارند. بررسی تکمیلی `start_qr_worker` race دیگری یافت: Stop خارج از lifecycle.lock مربوط به QR انجام می‌شد؛ concurrent Start می‌توانست در فاصله بین دو transaction وارد شود. Stop و ثبت QR intent اکنون زیر یک lock و با stop_account(alreadyLocked=true) انجام می‌شوند. regression قرارداد سورس این ترتیب را enforce می‌کند؛ Linux integration با QR worker مصنوعی انتقال bot→QR، cleanup و حفظ feature state را بررسی می‌کند. این تست QR واقعی یا2FA نیست و اجرای Linux هنوز UNVERIFIED است.

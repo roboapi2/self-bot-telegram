@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require '/opt/app/lib.php';
+require __DIR__ . '/http_client.php';
 if (cfg()['admin_password'] !== 'CI_FIXTURE_ONLY_PASSWORD' || (int) cfg()['api_id'] !== 1
     || PHP_OS_FAMILY !== 'Linux' || posix_getuid() !== 10001) throw new RuntimeException('Disposable CI fixture only');
 $checks = 0;
@@ -8,20 +9,24 @@ $cookie = ''; $csrf = '';
 function expect_life(bool $value, string $name): void { global $checks; if (!$value) throw new RuntimeException('Lifecycle: ' . $name); ++$checks; }
 function http_life(string $path, ?array $post = null): string {
     global $cookie;
-    $headers = "Cookie: $cookie\r\n";
-    $options = ['method' => $post === null ? 'GET' : 'POST', 'timeout' => 12, 'ignore_errors' => true];
-    if ($post !== null) { $headers .= "Content-Type: application/x-www-form-urlencoded\r\n"; $options['content'] = http_build_query($post); }
-    $options['header'] = $headers;
-    $body = file_get_contents('http://nginx:8080' . $path, false, stream_context_create(['http' => $options]));
-    foreach ($http_response_header ?? [] as $line) if (preg_match('/^Set-Cookie: ([^;]+)/i', $line, $m)) $cookie = $m[1];
-    return (string) $body;
+    return fixture_http('http://nginx:8080', $path, $cookie, $post)['body'];
 }
 function action_life(string $action, string $key): array {
     global $csrf;
-    return json_decode(http_life('/api.php?action=' . $action, ['key' => $key, 'name' => $key, 'csrf' => $csrf]), true, 512, JSON_THROW_ON_ERROR);
+    $result = fixture_json(http_life('/api.php?action=' . $action, ['key' => $key, 'name' => $key, 'csrf' => $csrf]));
+    if ($action === 'stop' && !$result['ok']) throw new RuntimeException('Fixture account Stop was not accepted');
+    return $result;
 }
 function status_life(string $key): array {
-    return json_decode(http_life('/api.php?action=account&key=' . $key), true, 512, JSON_THROW_ON_ERROR)['account']['status'];
+    $result = fixture_json(http_life('/api.php?action=account&key=' . $key));
+    $status = $result['account']['status'] ?? null;
+    if (!$result['ok'] || !is_array($status)) throw new RuntimeException('Fixture account status missing');
+    foreach (['state', 'enabled', 'process_alive', 'running', 'lifecycle'] as $field) {
+        if (!array_key_exists($field, $status)) throw new RuntimeException('Fixture account status fields missing');
+    }
+    if (!is_array($status['lifecycle']) || !is_string($status['state'])
+        || !is_bool($status['enabled']) || !is_bool($status['process_alive']) || !is_bool($status['running'])) throw new RuntimeException('Fixture account status types invalid');
+    return $status;
 }
 function await_life(string $key, string $state, int $seconds = 20): array {
     $deadline = hrtime(true) + $seconds * 1000000000;
@@ -33,10 +38,8 @@ function await_life(string $key, string $state, int $seconds = 20): array {
         'category' => $s['failure']['category'] ?? null], JSON_THROW_ON_ERROR));
 }
 $phase = $argv[1] ?? 'exercise';
-$login = http_life('/');
-preg_match('/name="csrf" value="([a-f0-9]+)"/', $login, $m);
-$dashboard = http_life('/', ['panel_password' => 'CI_FIXTURE_ONLY_PASSWORD', 'csrf' => $m[1]]);
-preg_match('/csrf\s*:\s*"([a-f0-9]+)"/', $dashboard, $m); $csrf = $m[1];
+$csrf = fixture_login('http://nginx:8080', $cookie, 'CI_FIXTURE_ONLY_PASSWORD');
+expect_life($csrf !== '', 'regenerated session retrieves authenticated dashboard');
 if (in_array($phase, ['verify_recreate', 'verify_supervisor'], true)) {
     expect_life(await_life('life-a', 'running')['running'], 'desired state survives recreation');
     expect_life(await_life('life-b', 'stopped')['running'] === false, 'explicit stop survives recreation');

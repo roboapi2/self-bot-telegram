@@ -76,7 +76,7 @@ root=Path(sys.argv[1])
 mount=lambda source,target: {'type':'bind','source':str(root/source),'target':target,'read_only':True,'bind':{'create_host_path':False}}
 Path(sys.argv[2]).write_text(json.dumps({'services':{
     'supervisor':{'volumes':[mount('tests/fixtures/bot_worker.php','/opt/app/bot_template.php')]},
-    'web':{'volumes':[mount('tests/compose_lifecycle.php','/opt/test/compose_lifecycle.php')]}
+    'web':{'volumes':[mount('tests/compose_lifecycle.php','/opt/test/compose_lifecycle.php'),mount('tests/http_client.php','/opt/test/http_client.php')]}
 }}))
 PY
 printf '<?php return ["api_id"=>1,"api_hash"=>"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","admin_password"=>"CI_FIXTURE_ONLY_PASSWORD"];\n' > "$ROOT/secrets/config.php"

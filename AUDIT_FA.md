@@ -1,5 +1,11 @@
 # گزارش ممیزی و تغییرات پروژه
 
+## اصلاح authentication fixture Compose — ۱۴ اکتبر ۲۰۲۶
+
+run38587385941/commit aa378e4 بررسی مستقیم شد: Linux lifecycle، rollback mock، package، Gitleaks، runtime/gateway scan و gateway validation موفق؛ Compose در ابتدای authenticated account creation شکست خورد و publish/rolling اجرا نشدند. PHP stream client قدیمی redirect ورود را با Cookie قدیمی دنبال می‌کرد؛ session_regenerate_id(true) آن session را باطل کرده بود. بازتولید محلی با login واقعی، نبود dashboard CSRF و401 برای session قبلی را ثابت کرد.
+
+client مشترک تست tests/http_client.php automatic redirect را خاموش،302 و Set-Cookie تازه و مقصد داخلی را بررسی، سپس GET تازه برای dashboard/CSRF انجام می‌دهد؛ status/JSON/fieldها قبل از استفاده بررسی و خطاها بدون body/cookie/token چاپ می‌شوند. همان client در تست HTTP محلی account را با API واقعی ایجاد/حذف و invalid CSRF و logout را بررسی می‌کند:32 HTTP checks موفق. production auth/session/CSRF و Docker restrictionها تغییر نکردند. نتیجه Linux نسخه قبلی اکنون PASS CI است؛ Compose کامل patch جدید، publish/rolling و Telegram هنوز UNVERIFIED هستند.
+
 ## وضعیت بازبینی تکمیلی — ۱۴ اکتبر ۲۰۲۶
 
 در ادامه همان ممیزی، defect طبقه‌بندی مرگ worker هنگام polling launcher و race در transaction انتقال bot به QR اصلاح شدند. patch فعلی هنوز staged و بدون commit/push است. QR اکنون Stop و ثبت قصد QR را زیر یک lifecycle.lock انجام می‌دهد؛ آزمون Linux با QR worker مصنوعی، توقف bot، نبود enabled، cleanup و حفظ feature state را بررسی می‌کند. diagnostic timeout Compose اکنون خلاصه whitelist وضعیت و category را چاپ می‌کند. [گزارش کامل](docs/LIFECYCLE_AUDIT_FA.md) شامل معماری، filesystem، patch dependency، checklist یکپارچه و rollback است.

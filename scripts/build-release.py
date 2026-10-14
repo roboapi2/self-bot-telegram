@@ -41,7 +41,7 @@ files = ['index.php', 'api.php', 'lib.php', 'runtime.php', 'worker.php', 'superv
          'docker/gateway/source.sha256', 'docker/gateway/main.go', 'tests/gateway_publish.py',
          'tests/madeline_logger.php', 'tests/madeline_readonly.php',
          'madeline_bootstrap.php', 'scripts/patch-madeline.php', 'tests/bot_contract.php',
-         'tests/compose_lifecycle.php', 'tests/fixtures/bot_worker.php', 'tests/frontend_lifecycle.js']
+         'tests/compose_lifecycle.php', 'tests/fixtures/bot_worker.php', 'tests/frontend_lifecycle.js', 'tests/http_client.php']
 # Optional reviewed configuration example; private .env files are never included.
 if (root / '.env.example').is_file():
     files.append('.env.example')
