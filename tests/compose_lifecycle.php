@@ -24,9 +24,13 @@ function status_life(string $key): array {
     return json_decode(http_life('/api.php?action=account&key=' . $key), true, 512, JSON_THROW_ON_ERROR)['account']['status'];
 }
 function await_life(string $key, string $state, int $seconds = 20): array {
-    $deadline = time() + $seconds;
-    do { $s = status_life($key); if ($s['state'] === $state) return $s; usleep(200000); } while (time() < $deadline);
-    throw new RuntimeException('Lifecycle timeout: ' . $key . ' expected ' . $state . ' got ' . $s['state']);
+    $deadline = hrtime(true) + $seconds * 1000000000;
+    do { $s = status_life($key); if ($s['state'] === $state) return $s; usleep(200000); } while (hrtime(true) < $deadline);
+    throw new RuntimeException('Lifecycle timeout: ' . json_encode(['key' => $key, 'expected' => $state,
+        'state' => $s['state'], 'enabled' => $s['enabled'], 'alive' => $s['process_alive'], 'ready' => $s['running'],
+        'stage' => $s['lifecycle']['stage'] ?? null, 'attempts' => $s['lifecycle']['attempts'] ?? 0,
+        'retry_at' => $s['lifecycle']['retry_at'] ?? null, 'heartbeat' => $s['lifecycle']['heartbeat'] ?? 0,
+        'category' => $s['failure']['category'] ?? null], JSON_THROW_ON_ERROR));
 }
 $phase = $argv[1] ?? 'exercise';
 $login = http_life('/');
@@ -44,7 +48,7 @@ if (in_array($phase, ['verify_recreate', 'verify_supervisor'], true)) {
     echo "$checks Compose recreation checks passed (synthetic Telegram layer)\n"; exit;
 }
 expect_life(read_json_file('/opt/app/.panel/supervisor.health.json')['scan_completed'] === true, 'supervisor health reflects completed scan');
-foreach (['life-a', 'life-b', 'life-fail', 'life-exit', 'life-delay', 'life-lock', 'life-missing', 'life-permission', 'life-log', 'life-pid', 'life-super-error'] as $key) {
+foreach (['life-a', 'life-b', 'life-fail', 'life-exit', 'life-delay', 'life-lock', 'life-missing', 'life-permission', 'life-log', 'life-pid', 'life-super-error', 'life-poll'] as $key) {
     expect_life(action_life('create_account', $key)['ok'], 'create via authenticated API');
     file_put_contents(account_paths($key)['session'], 'SYNTHETIC_AUTHORIZED_SESSION');
     json_write_atomic(account_paths($key)['qr_state'], ['logged_in' => true]);
@@ -68,6 +72,15 @@ file_put_contents(account_paths('life-super-error')['qr_state'], '{broken');
 json_write_atomic(account_dir('life-super-error') . '/enabled', true);
 lifecycle_write('life-super-error', '', static fn(array $s): array => ['state' => 'queued', 'requested_at' => time()]);
 expect_life(await_life('life-super-error', 'failed')['failure']['category'] === 'supervisor_account_error', 'per-account supervisor exception visible');
+json_write_atomic(account_dir('life-poll') . '/fixture-mode.json', ['mode' => 'crash_once']);
+file_put_contents(account_dir('life-poll') . '/crash-once', 'fixture');
+expect_life(action_life('start', 'life-poll')['ok'], 'launch polling crash requested');
+$early = await_life('life-poll', 'failed', 8);
+expect_life($early['failure']['category'] === 'process_exit' && $early['lifecycle']['retry_at'] > time()
+    && $early['lifecycle']['ready_at'] !== null, 'launch polling death gets recoverable retry');
+$earlyRecovered = await_life('life-poll', 'running');
+expect_life($earlyRecovered['pid'] !== $early['lifecycle']['pid']
+    && $earlyRecovered['lifecycle']['identity'] !== $early['lifecycle']['identity'], 'launch polling respawn has new process identity');
 json_write_atomic(account_dir('life-fail') . '/fixture-mode.json', ['mode' => 'fail']);
 json_write_atomic(account_dir('life-exit') . '/fixture-mode.json', ['mode' => 'early_exit']);
 json_write_atomic(account_dir('life-delay') . '/fixture-mode.json', ['mode' => 'delay']);
@@ -101,11 +114,21 @@ expect_life(status_life('life-a')['running'] && (int) status_life('life-a')['pid
 expect_life(action_life('restart', 'life-a')['ok'], 'restart via API');
 expect_life(posix_kill(getmypid(), 0), 'stale PID never signals unrelated driver');
 expect_life((int) await_life('life-a', 'running')['pid'] !== $pid, 'new real worker generation');
-$pid = (int) status_life('life-a')['pid'];
-posix_kill($pid, SIGKILL);
+$beforeCrash = status_life('life-a'); $pid = (int) $beforeCrash['pid'];
+json_write_atomic(account_dir('life-a') . '/fixture-config.json', ['value' => 'private-fixture']);
+expect_life(posix_kill($pid, SIGKILL), 'crash signal sent to fixture worker');
+$deadline = hrtime(true) + 5000000000;
+do { if (!process_owned($pid, 'life-a')) break; usleep(100000); } while (hrtime(true) < $deadline);
+expect_life(!process_owned($pid, 'life-a'), 'exact killed worker terminated');
+$detected = await_life('life-a', 'failed', 8);
+expect_life($detected['failure']['category'] === 'process_exit' && $detected['lifecycle']['retry_at'] > time(), 'supervisor detects crash and schedules retry');
 $deadline = time() + 35;
 do { $recovered = status_life('life-a'); if ($recovered['running'] && (int) $recovered['pid'] !== $pid) break; usleep(200000); } while (time() < $deadline);
-expect_life($recovered['running'] && (int) $recovered['pid'] !== $pid, 'crash recovery');
+expect_life($recovered['running'] && (int) $recovered['pid'] !== $pid
+    && $recovered['lifecycle']['identity'] !== $beforeCrash['lifecycle']['identity']
+    && $recovered['lifecycle']['run_id'] !== $beforeCrash['lifecycle']['run_id']
+    && $recovered['lifecycle']['heartbeat'] > time() - 5, 'crash recovery with new generation and heartbeat');
+expect_life(read_json_file(account_dir('life-a') . '/fixture-config.json') === ['value' => 'private-fixture'], 'crash retains persistent account data');
 expect_life(action_life('stop', 'life-b')['ok'], 'explicit stop');
 await_life('life-b', 'stopped');
 expect_life(read_json_file(account_dir('life-b') . '/fixture-flushed.json')['flushed'], 'stop does not hold worker data lock');
@@ -119,7 +142,6 @@ await_life('life-delay', 'starting');
 expect_life(action_life('restart', 'life-delay')['ok'], 'restart during initialization');
 expect_life(await_life('life-delay', 'running')['running'], 'replacement generation becomes ready');
 action_life('stop', 'life-delay');
-json_write_atomic(account_dir('life-a') . '/fixture-config.json', ['value' => 'private-fixture']);
 $deadline = time() + 10;
 do { $observed = read_json_file(account_dir('life-a') . '/fixture-observed.json', []); if ($observed === ['value' => 'private-fixture']) break; usleep(200000); } while (time() < $deadline);
 expect_life($observed === ['value' => 'private-fixture'], 'runtime config consumed in real worker');

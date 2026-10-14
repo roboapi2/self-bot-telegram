@@ -21,6 +21,9 @@ if ($mode === 'ipc_failure') { worker_stage('ipc_initialization'); throw new Run
 if ($mode === 'restoration_failure') { worker_stage('session_restoration'); throw new RuntimeException('Synthetic session restoration failure'); }
 if (file_get_contents(account_paths($key)['session']) !== 'SYNTHETIC_AUTHORIZED_SESSION') throw new RuntimeException('Synthetic session restoration failed');
 ubcc_event_handler_ready();
+if ($mode === 'crash_once' && is_file($dir . '/crash-once')) {
+    unlink($dir . '/crash-once'); posix_kill(getmypid(), SIGKILL);
+}
 while (true) {
     worker_heartbeat();
     // Synthetic shared config/message persistence; never sends a Telegram message.

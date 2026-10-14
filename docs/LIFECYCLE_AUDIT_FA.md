@@ -1,5 +1,34 @@
 # ممیزی کامل چرخه اجرا — ۱۴ اکتبر ۲۰۲۶
 
+## بازبینی مجدد درخواست جامع
+
+فایل درخواست مجدد همان scope ممیزی قبلی را دارد؛ patch و یافته‌ها ادامه همان کارند. بررسی تکمیلی `start_qr_worker` race دیگری یافت: Stop خارج از lifecycle.lock مربوط به QR انجام می‌شد؛ concurrent Start می‌توانست در فاصله بین دو transaction وارد شود. Stop و ثبت QR intent اکنون زیر یک lock و با stop_account(alreadyLocked=true) انجام می‌شوند. regression قرارداد سورس این ترتیب را enforce می‌کند؛ Linux integration با QR worker مصنوعی انتقال bot→QR، cleanup و حفظ feature state را بررسی می‌کند. این تست QR واقعی یا2FA نیست و اجرای Linux هنوز UNVERIFIED است.
+
+timeout تست Compose اکنون به جای فقط نام state، stage، fixed category، attempt/retry، heartbeat، intent و process_alive را چاپ می‌کند؛ هیچ response خام، credential، session، argv یا محتوای log چاپ نمی‌شود. deadlock در این تغییر معرفی نشده: Stop داخل همان lock از پارامتر alreadyLocked استفاده می‌کند. وضعیت اجرای جدید Actions برای این patch موجود نیست؛ همه ادعاهای PASS Docker باید تا قبولی run جدید معلق بمانند.
+
+## اصلاح race بازیابی crash در CI — run38476529900
+
+commit `f783854b48958562c0958ed33f7d84297a79c4bc` در Linux lifecycle، روی خط دارای دو await_worker با «Worker timeout» شکست خورد. طبق log ارائه‌شده، Compose، بسته release، scan و publish هنوز اجرا نشده بودند. پیام قدیمی مشخص نمی‌کند انتظار توقف timeout شده یا انتظار بازیابی؛ این نسبت‌دادن با log موجود قابل اثبات نیست.
+
+**مکانیزم معیوب سورس تأیید شد:** worker PID و حتی readiness را قبل از پایان polling صد میلی‌ثانیه‌ای launch_worker ثبت می‌کند. تست قدیمی فقط worker_running=true را می‌دید و می‌توانست همان worker را پیش از بازگشت launcher بکشد. launcher سپس unsuccessful برمی‌گشت و supervise_account آن را spawn_failure ثبت می‌کرد؛ این category به‌طور عمدی retry_at=null دارد. بنابراین crash یک PHP واقعاً راه‌اندازی‌شده با ناتوانی دائمی spawn اشتباه گرفته می‌شد. این interleaving توضیح محتمل انتظار دوم است؛ بازتولید دقیق زمانی در همان image Linux هنوز در محیط محلی ممکن نیست.
+
+اصلاح محدود در runtime.php:134 و:142، `record_launch_failure` در:148 را فراخوانی می‌کند: اگر نسل فعلی وارد bootstrap شده، failure از نوع process_exit و دارای backoff محدود است؛ اگر هیچ مرحله‌ای جز spawn طی نشده، سیاست spawn_failure دائمی حفظ می‌شود. failure قبلی worker و نسل جدیدتر overwrite نمی‌شوند. unit با کلاس‌های واقعی runtime نشان می‌دهد طبقه‌بندی قبلی حتی با stage handlers_ready و PID ثبت‌شده retry را دائماً قطع می‌کرد؛ اصلاح retry آینده می‌سازد، retry موجود را عقب نمی‌اندازد و نسل obsolete را تغییر نمی‌دهد. هیچ timeout برنامه یا تعداد تلاش‌ها افزایش نیافته است.
+
+tests/linux_lifecycle.php انتظارهای مبهم را با deadline monotonic و milestoneهای متمایز جایگزین می‌کند: readiness و تکمیل scan ناظر قبل از crash عادی، توقف همان PID کشته‌شده (از جمله zombie)، ثبت process_exit و retry آینده، respawn با PID/birth identity/run_id جدید، heartbeat جلو‌رونده و حفظ feature state. Stop طی دو scan واقعی بررسی می‌شود؛ sleep دلخواه جایگزین assertion نشده است. تست جداگانه worker را بلافاصله بعد از readiness با SIGKILL مصنوعی می‌کشد تا مرگ هنگام launcher polling نیز پوشش داده شود. shutdown ناظر و پاک‌شدن PID/started_at bounded بررسی می‌شوند. failure فقط state/stage/category، PID، birth identity، kernel state، زمان و retry را چاپ می‌کند؛ raw logs، argv، environment و session چاپ نمی‌شوند.
+
+gate production Compose همان race مصنوعی، crash detection و retry قبل از respawn، process identity جدید، heartbeat تازه و حفظ config حساب را بررسی می‌کند. UID10001، read_only، cap_drop، tmpfs و PID namespace مشترک حفظ‌اند. tests/linux_lifecycle.php اکنون از transient worker_running=false برای کل حساب به‌عنوان synchronization استفاده نمی‌کند؛ فرآیند کشته‌شده و نسل جدید جداگانه بررسی می‌شوند.
+
+| نتیجه این اصلاح | وضعیت |
+|---|---|
+| defect سیاست retry و regression آفلاین | PASS؛ پنج assertion جدید،55 unit محلی روی Windows؛ تعداد Linux به دلیل assertion POSIX می‌تواند متفاوت باشد |
+| suite محلی | PASS؛160 concurrency،6 migration،7 Docker config،34 logger،31 bot contract،29 HTTP و13 frontend؛ شمارش logger در Linux assertion permission اضافی دارد |
+| قرارداد CI/package/privacy | PASS؛152 CI regression و298 قرارداد offline؛44 ignored /103 eligible، archive fixture95 فایل و checksum/allowlist موفق |
+| Linux runtime و Compose با workerهای واقعی | UNVERIFIED؛ Docker executable/engine در محیط نیست و WSL نصب نیست. اجرای suite Linux محلی SKIPPED محیطی است؛ در Linux نبود pcntl/posix اکنون fail می‌شود و امکان skip کردن gate وجود ندارد |
+| scans، rollback، publish و rolling نسخه جدید | UNVERIFIED تا Actions جدید؛ workflow، severity، timeout و security gateها تغییر نکرده‌اند |
+| Telegram واقعی | UNVERIFIED؛ fixture فقط لایه Telegram را جایگزین می‌کند، نه supervisor/worker واقعی |
+
+اپراتور باید این patch را review و خودش commit/push کند؛ قبولی کامل Linux lifecycle و Compose در Actions شرط تأیید است. هیچ VPS یا داده واقعی لمس نشده و هیچ push/deploy خودکار انجام نشده است. روند امن استقرار، rollback جفت image و checklist پذیرش پایین این سند همچنان معتبرند؛ این patch صرفاً با PASS محلی «تأیید production» اعلام نمی‌شود.
+
 این گزارش درباره patch فعلی است. قبولی Actions نسخه قبلی (`080d684edab0022bfa990689ad3d7b2087982b92`، run38458306695) اثبات قبولی این تغییرات نیست. محیط محلی Windows/PHP8.4.23 است؛ Docker engine و میزبان Linux تست موجود نیست. هیچ VPS، session واقعی، credential یا تنظیمات production خوانده یا تغییر داده نشده؛ push و deploy انجام نشده است. ورود و عملکرد واقعی Telegram هنوز تأیید نشده‌اند.
 
 ## معماری و مسیر واقعی اجرا
@@ -35,7 +64,7 @@ Stop ابتدا enabled و QR request را پاک و نسل را عوض می‌�
 
 دو مسیر کم‌مشاهده دیگر اصلاح شدند: `runtime.php::launch_worker` قبل از shell، قابلیت append لاگ را بررسی و log_unwritable پایدار ثبت می‌کند؛ `worker.php` شکست bootstrap قبل از PID را catch و با stage pid_registration/class/file/line ثبت می‌کند. آزمون محلی real PHP worker با PID target از نوع directory، exit1 و failure پایدار را بازتولید/تأیید کرد؛ آزمون Compose فایل log/PID با mode0400 تحت UID10001 و stale PID متعلق به driver را اضافه می‌کند. heartbeat supervisor اکنون پس از تکمیل scan نوشته می‌شود؛ خطای سراسری دیگر قبل از scan heartbeat تازه ایجاد نمی‌کند. خطای یک account با failure اختصاصی هنوز اجازه رسیدگی به بقیه و سلامت خود ناظر را می‌دهد.
 
-محل دقیق اصلاحات در سورس این نسخه: bot_template.php:2608 guard تعریف/launcher؛ scripts/patch-madeline.php:18 انتقال environment IPC و:23 readiness پس از validation؛ runtime.php:102 launch،:172 failure و:244 supervision؛ worker.php:23 ثبت PID و catch bootstrap؛ lib.php:304 پذیرش Start؛ supervisor.php:28 ثبت scan تکمیل‌شده. این شماره‌ها مربوط به patch فعلی‌اند و با ویرایش بعدی ممکن است تغییر کنند.
+محل دقیق اصلاحات در سورس این نسخه: bot_template.php:2608 guard تعریف/launcher؛ scripts/patch-madeline.php:18 انتقال environment IPC و:23 readiness پس از validation؛ runtime.php:102 launch،:186 failure و:258 supervision؛ worker.php:23 ثبت PID و catch bootstrap؛ lib.php:304 پذیرش Start؛ supervisor.php:28 ثبت scan تکمیل‌شده. این شماره‌ها مربوط به patch فعلی‌اند و با ویرایش بعدی ممکن است تغییر کنند.
 
 ## وضعیت، خطا و بازیابی
 
@@ -136,7 +165,7 @@ PASS به معنای اجرای محلی مشخص است؛ SKIPPED یعنی gate
 
 | حوزه | نتیجه و شاهد |
 |---|---|
-| PHP/shell syntax، unit و atomic concurrency | PASS؛50 unit،160 locked update،6 migration،7 Docker configuration و16 بلوک shell workflow؛ real PHP worker خطای PID و lock path پیش از PID را ثبت می‌کند |
+| PHP/shell syntax، unit و atomic concurrency | PASS؛55 unit،160 locked update،6 migration،7 Docker configuration و16 بلوک shell workflow؛ real PHP worker خطای PID و lock path پیش از PID را ثبت می‌کند |
 | login/logout، auth/CSRF، account API و ورودی نامعتبر | PASS؛29 HTTP security روی PHP server محلی، fixtureهای disposable |
 | logger Closure/serialization، secret redaction، scratch و spawned bootstrap | PASS؛34 تست با vendor واقعی و Revolt، بدون Telegram |
 | تعریف UserBot، vendor handler validation، filesystem helper و آرشیو متن/رسانه | PASS؛31 bot contract، stream hash و media classification مصنوعی |

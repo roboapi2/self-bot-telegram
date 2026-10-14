@@ -144,6 +144,10 @@ check('UBCC_WORKER_RUNNER' in (root / 'bot_template.php').read_text(encoding='ut
 check("require_once __DIR__ . '/bot_template.php'" in (root / 'madeline_bootstrap.php').read_text(encoding='utf-8'),
       'IPC restoration cannot find UserBot class')
 runtime = (root / 'runtime.php').read_text(encoding='utf-8')
+lib = (root / 'lib.php').read_text(encoding='utf-8')
+qr_start = lib.split('function start_qr_worker', 1)[1].split('function stop_qr_worker', 1)[0]
+check(qr_start.index('with_file_lock') < qr_start.index('stop_account($key, true)'),
+      'QR transition must stop the bot and queue QR under one lifecycle lock')
 supervisor = (root / 'supervisor.php').read_text(encoding='utf-8')
 check(supervisor.index("'/supervisor.health.json'") > supervisor.index('foreach ($accounts'),
       'Supervisor heartbeat must follow completed account processing')

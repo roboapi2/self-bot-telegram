@@ -130,13 +130,27 @@ function launch_worker(string $key, string $kind): array
         . escapeshellarg(base_dir() . '/worker.php') . ' ' . escapeshellarg($kind) . ' ' . escapeshellarg($key)
         . ' >> ' . escapeshellarg($log) . ' 2>&1 < /dev/null & echo $!';
     $pid = trim((string) shell_exec($cmd));
-    if (!ctype_digit($pid)) return ['ok' => false, 'error' => 'راه‌اندازی کارگر ممکن نشد.'];
+    if (!ctype_digit($pid)) {
+        if ($kind === 'bot') record_launch_failure($key, $run);
+        return ['ok' => false, 'error' => 'راه‌اندازی کارگر ممکن نشد.'];
+    }
     for ($i = 0; $i < 20; $i++) {
         usleep(100000);
         if (worker_running($key, $kind)) return ['ok' => true, 'accepted' => true, 'message' => 'پردازش آغاز شد؛ آماده‌سازی هنوز کامل نشده است.'];
         if (!pid_running((int) $pid)) break;
     }
+    if ($kind === 'bot') record_launch_failure($key, $run);
     return ['ok' => false, 'error' => 'کارگر شروع نشد؛ لاگ حساب را بررسی کنید.'];
+}
+
+/** A worker that entered bootstrap and died during spawn polling is a crash,
+ * not a permanent inability to spawn PHP. Preserve errors recorded by it. */
+function record_launch_failure(string $key, string $run): void
+{
+    $s = lifecycle_read($key);
+    if (($s['run_id'] ?? '') !== $run || ($s['state'] ?? '') === 'failed') return;
+    $entered = ($s['stage'] ?? 'spawn') !== 'spawn' || (int) ($s['pid'] ?? 0) > 0;
+    lifecycle_failure($key, $run, $entered ? 'process_exit' : 'spawn_failure');
 }
 
 /** Linux process birth identity protects readiness against PID reuse. */

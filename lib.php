@@ -421,9 +421,10 @@ function stop_all_accounts(): array
 
 function start_qr_worker(string $key): array
 {
-    $stopped = stop_account($key);
-    if (!$stopped['ok']) return $stopped;
     return with_file_lock(account_dir($key) . '/lifecycle.lock', static function () use ($key): array {
+        // Keep bot Stop and QR intent in the same lifecycle transaction.
+        $stopped = stop_account($key, true);
+        if (!$stopped['ok']) return $stopped;
         ensure_account_files($key);
         if (!terminate_worker($key, 'qr')) return ['ok' => false, 'error' => 'کارگر قبلی هنوز متوقف نشده است.'];
         $p = account_paths($key);

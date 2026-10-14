@@ -1,5 +1,11 @@
 # گزارش ممیزی و تغییرات پروژه
 
+## وضعیت بازبینی تکمیلی — ۱۴ اکتبر ۲۰۲۶
+
+در ادامه همان ممیزی، defect طبقه‌بندی مرگ worker هنگام polling launcher و race در transaction انتقال bot به QR اصلاح شدند. patch فعلی هنوز staged و بدون commit/push است. QR اکنون Stop و ثبت قصد QR را زیر یک lifecycle.lock انجام می‌دهد؛ آزمون Linux با QR worker مصنوعی، توقف bot، نبود enabled، cleanup و حفظ feature state را بررسی می‌کند. diagnostic timeout Compose اکنون خلاصه whitelist وضعیت و category را چاپ می‌کند. [گزارش کامل](docs/LIFECYCLE_AUDIT_FA.md) شامل معماری، filesystem، patch dependency، checklist یکپارچه و rollback است.
+
+آخرین اجرای محلی:55 unit،160 concurrency،6 migration،7 Docker configuration،34 logger،31 bot contract،29 HTTP و13 frontend؛ 153 CI regression،298 قرارداد deployment،18 publish mock و13 diagnostics mock؛ release fixture95 فایل با checksum/allowlist/privacy موفق. Linux/Compose/Trivy/Gitleaks/rolling این patch هنوز UNVERIFIED هستند؛ Windows بدون Docker و WSL نمی‌تواند نتیجه Linux بدهد. نسخه قبلی f783854 در run38476529900 شکست داشته است؛ تایید gateهای بعدی یا عملکرد واقعی Telegram ادعا نمی‌شود. هیچ داده production، credential، session، ports/TLS و dependency version تغییر نکرده است.
+
 ## ممیزی end-to-end چرخه حساب — ۱۴ اکتبر ۲۰۲۶
 
 [گزارش کامل معماری، اشکالات تأییدشده، قرارداد filesystem، ماتریس آزمون، استقرار/rollback و checklist یکپارچه پذیرش](docs/LIFECYCLE_AUDIT_FA.md) مبنای patch فعلی است. سورس در همان repository موجود اصلاح شد؛ VPS، session/config و credential واقعی تغییر نکرده‌اند و push/deploy انجام نشده است.
